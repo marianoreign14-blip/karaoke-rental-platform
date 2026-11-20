@@ -1,11 +1,34 @@
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Annotated, Literal
 
-from pydantic import BaseModel, ConfigDict, EmailStr, Field, HttpUrl, model_validator
+from pydantic import BaseModel, BeforeValidator, ConfigDict, EmailStr, Field, HttpUrl, StringConstraints, model_validator
 
 from app.models import AssetCondition, PaymentEntryKind, PaymentMethod, RequestKind, RentalStatus
 
+
+def _blank_to_none(value: object) -> object:
+    if isinstance(value, str):
+        stripped = value.strip()
+        return stripped if stripped else None
+    return value
+
+
+def _to_utc(dt: datetime) -> datetime:
+    return dt.astimezone(timezone.utc)
+
+
 PositiveQuantity = Annotated[int, Field(gt=0, le=1000)]
+
+
+def trimmed_str(min_length: int, max_length: int):
+    return Annotated[str, StringConstraints(strip_whitespace=True, min_length=min_length, max_length=max_length)]
+
+
+def optional_trimmed_str(max_length: int):
+    return Annotated[
+        Annotated[str, StringConstraints(strip_whitespace=True, max_length=max_length)] | None,
+        BeforeValidator(_blank_to_none),
+    ]
 
 
 class APIModel(BaseModel):
@@ -15,13 +38,13 @@ class APIModel(BaseModel):
 class RegisterInput(APIModel):
     email: EmailStr
     password: Annotated[str, Field(min_length=12, max_length=128)]
-    display_name: Annotated[str, Field(min_length=1, max_length=120)]
-    phone: Annotated[str | None, Field(max_length=40)] = None
+    display_name: trimmed_str(1, 120)
+    phone: optional_trimmed_str(40) = None
 
 
 class LoginInput(APIModel):
     email: EmailStr
-    password: str
+    password: Annotated[str, Field(min_length=1, max_length=128)]
 
 
 class UserRead(APIModel):
@@ -34,8 +57,22 @@ class UserRead(APIModel):
 
 
 class ProfileUpdate(APIModel):
-    display_name: Annotated[str, Field(min_length=1, max_length=120)]
-    phone: Annotated[str | None, Field(max_length=40)] = None
+    display_name: trimmed_str(1, 120)
+    phone: optional_trimmed_str(40) = None
+
+
+class PasswordChangeInput(APIModel):
+    current_password: Annotated[str, Field(min_length=1, max_length=128)]
+    new_password: Annotated[str, Field(min_length=12, max_length=128)]
+
+
+class ForgotPasswordInput(APIModel):
+    email: EmailStr
+
+
+class ResetPasswordInput(APIModel):
+    token: trimmed_str(16, 256)
+    new_password: Annotated[str, Field(min_length=12, max_length=128)]
 
 
 class ActiveUpdate(APIModel):
@@ -43,31 +80,39 @@ class ActiveUpdate(APIModel):
 
 
 class BusinessRegisterInput(APIModel):
-    business_name: Annotated[str, Field(min_length=2, max_length=160)]
-    owner_name: Annotated[str, Field(min_length=1, max_length=120)]
+    business_name: trimmed_str(2, 160)
+    owner_name: trimmed_str(1, 120)
     email: EmailStr
-    contact_number: Annotated[str, Field(min_length=7, max_length=40)]
-    address: Annotated[str, Field(min_length=5, max_length=500)]
+    contact_number: trimmed_str(7, 40)
+    address: trimmed_str(5, 500)
     password: Annotated[str, Field(min_length=12, max_length=128)]
 
 
 class BusinessDecisionInput(APIModel):
     status: Literal["active", "rejected", "suspended"]
-    note: Annotated[str | None, Field(max_length=1000)] = None
+    note: optional_trimmed_str(1000) = None
 
 
 class BusinessSubscriptionInput(APIModel):
-    subscription_plan: Annotated[str, Field(min_length=1, max_length=40)]
+    subscription_plan: trimmed_str(1, 40)
     subscription_status: Literal["active", "trialing", "past_due", "cancelled"]
     subscription_ends_at: datetime | None = None
 
+    @model_validator(mode="after")
+    def validate_subscription_end(self):
+        if self.subscription_ends_at is not None:
+            if self.subscription_ends_at.tzinfo is None:
+                raise ValueError("Subscription end date must include a timezone")
+            self.subscription_ends_at = _to_utc(self.subscription_ends_at)
+        return self
+
 
 class BusinessProfileInput(APIModel):
-    name: Annotated[str, Field(min_length=2, max_length=160)]
-    description: Annotated[str, Field(max_length=4000)] = ""
-    contact_email: EmailStr | None = None
-    contact_phone: Annotated[str | None, Field(max_length=40)] = None
-    address: Annotated[str | None, Field(max_length=500)] = None
+    name: trimmed_str(2, 160)
+    description: Annotated[str, StringConstraints(strip_whitespace=True, max_length=4000)] = ""
+    contact_email: Annotated[EmailStr | None, BeforeValidator(_blank_to_none)] = None
+    contact_phone: optional_trimmed_str(40) = None
+    address: optional_trimmed_str(500) = None
     brand_primary: Annotated[str, Field(pattern=r"^#[0-9a-fA-F]{6}$")]
     brand_secondary: Annotated[str, Field(pattern=r"^#[0-9a-fA-F]{6}$")]
     brand_accent: Annotated[str, Field(pattern=r"^#[0-9a-fA-F]{6}$")]
@@ -75,8 +120,8 @@ class BusinessProfileInput(APIModel):
 
 class BusinessAdminCreateInput(APIModel):
     email: EmailStr
-    display_name: Annotated[str, Field(min_length=1, max_length=120)]
-    phone: Annotated[str | None, Field(max_length=40)] = None
+    display_name: trimmed_str(1, 120)
+    phone: optional_trimmed_str(40) = None
     password: Annotated[str, Field(min_length=12, max_length=128)]
 
 
@@ -85,12 +130,12 @@ class PlatformSettingInput(APIModel):
 
 
 class QualityInput(APIModel):
-    name: Annotated[str, Field(min_length=1, max_length=80)]
+    name: trimmed_str(1, 80)
     is_active: bool = True
 
 
 class BusinessCategoryInput(APIModel):
-    name: Annotated[str, Field(min_length=1, max_length=80)]
+    name: trimmed_str(1, 80)
     is_active: bool = True
 
 
@@ -117,21 +162,21 @@ class PricingFields(APIModel):
 
 
 class ProductCreate(PricingFields):
-    name: Annotated[str, Field(min_length=1, max_length=160)]
-    description: Annotated[str, Field(max_length=4000)] = ""
-    category: Annotated[str, Field(min_length=1, max_length=80)]
+    name: trimmed_str(1, 160)
+    description: Annotated[str, StringConstraints(strip_whitespace=True, max_length=4000)] = ""
+    category: trimmed_str(1, 80)
     quality_tier_id: int
     initial_stock: Annotated[int, Field(ge=0, le=1000)] = 0
-    image_url: HttpUrl | None = None
+    image_url: Annotated[HttpUrl | None, BeforeValidator(_blank_to_none)] = None
     is_active: bool = True
 
 
 class ProductUpdate(PricingFields):
-    name: Annotated[str, Field(min_length=1, max_length=160)]
-    description: Annotated[str, Field(max_length=4000)] = ""
-    category: Annotated[str, Field(min_length=1, max_length=80)]
+    name: trimmed_str(1, 160)
+    description: Annotated[str, StringConstraints(strip_whitespace=True, max_length=4000)] = ""
+    category: trimmed_str(1, 80)
     quality_tier_id: int
-    image_url: HttpUrl | None = None
+    image_url: Annotated[HttpUrl | None, BeforeValidator(_blank_to_none)] = None
     is_active: bool = True
 
 
@@ -170,13 +215,13 @@ class PackageComponentInput(APIModel):
 
 
 class PackageInput(APIModel):
-    name: Annotated[str, Field(min_length=1, max_length=160)]
-    description: Annotated[str, Field(max_length=4000)] = ""
+    name: trimmed_str(1, 160)
+    description: Annotated[str, StringConstraints(strip_whitespace=True, max_length=4000)] = ""
     price_cents: Annotated[int | None, Field(ge=0)] = None
     pricing_basis: str | None = None
     billing_interval_minutes: Annotated[int | None, Field(gt=0, le=525600)] = None
     rounding_rule: str | None = None
-    image_url: HttpUrl | None = None
+    image_url: Annotated[HttpUrl | None, BeforeValidator(_blank_to_none)] = None
     is_active: bool = True
     components: Annotated[list[PackageComponentInput], Field(min_length=1, max_length=30)]
 
@@ -197,6 +242,9 @@ class PackageInput(APIModel):
                 raise ValueError("duration pricing requires a price, interval, and ceil or pro_rata rounding")
         else:
             raise ValueError("pricing_basis must be per_rental or duration")
+        product_ids = [component.product_id for component in self.components]
+        if len(set(product_ids)) != len(product_ids):
+            raise ValueError("Each product can only appear once in a package; increase its quantity instead")
         return self
 
 
@@ -236,6 +284,8 @@ class OrderCreate(APIModel):
     def validate_window(self):
         if self.starts_at.tzinfo is None or self.ends_at.tzinfo is None:
             raise ValueError("Rental timestamps must include a timezone")
+        self.starts_at = _to_utc(self.starts_at)
+        self.ends_at = _to_utc(self.ends_at)
         if self.ends_at <= self.starts_at:
             raise ValueError("ends_at must be later than starts_at")
         return self
@@ -243,12 +293,12 @@ class OrderCreate(APIModel):
 
 class OrderStatusInput(APIModel):
     status: RentalStatus
-    note: Annotated[str | None, Field(max_length=1000)] = None
+    note: optional_trimmed_str(1000) = None
 
 
 class OrderRequestInput(APIModel):
     kind: RequestKind
-    reason: Annotated[str, Field(min_length=1, max_length=2000)]
+    reason: trimmed_str(1, 2000)
     starts_at: datetime | None = None
     ends_at: datetime | None = None
     lines: Annotated[list[OrderLineInput] | None, Field(min_length=1, max_length=50)] = None
@@ -259,12 +309,18 @@ class OrderRequestInput(APIModel):
             self.starts_at is None or self.ends_at is None or self.lines is None
         ):
             raise ValueError("Modification requests must include rental dates and replacement order lines")
-        if self.kind == RequestKind.CANCELLATION and (self.starts_at is not None or self.lines is not None):
+        if self.kind == RequestKind.CANCELLATION and (
+            self.starts_at is not None or self.ends_at is not None or self.lines is not None
+        ):
             raise ValueError("Cancellation requests must not include replacement order details")
-        if self.starts_at is not None and self.starts_at.tzinfo is None:
-            raise ValueError("starts_at must include a timezone")
-        if self.ends_at is not None and self.ends_at.tzinfo is None:
-            raise ValueError("ends_at must include a timezone")
+        if self.starts_at is not None:
+            if self.starts_at.tzinfo is None:
+                raise ValueError("starts_at must include a timezone")
+            self.starts_at = _to_utc(self.starts_at)
+        if self.ends_at is not None:
+            if self.ends_at.tzinfo is None:
+                raise ValueError("ends_at must include a timezone")
+            self.ends_at = _to_utc(self.ends_at)
         if self.starts_at is not None and self.ends_at is not None and self.ends_at <= self.starts_at:
             raise ValueError("ends_at must be later than starts_at")
         return self
@@ -272,7 +328,7 @@ class OrderRequestInput(APIModel):
 
 class RequestDecisionInput(APIModel):
     approved: bool
-    note: Annotated[str | None, Field(max_length=1000)] = None
+    note: optional_trimmed_str(1000) = None
 
 
 class PaymentSubmission(APIModel):
@@ -280,24 +336,25 @@ class PaymentSubmission(APIModel):
     amount_cents: Annotated[int, Field(gt=0)]
     method: PaymentMethod
     paid_at: datetime
-    reference_number: Annotated[str | None, Field(max_length=160)] = None
-    notes: Annotated[str | None, Field(max_length=1000)] = None
+    reference_number: optional_trimmed_str(160) = None
+    notes: optional_trimmed_str(1000) = None
 
     @model_validator(mode="after")
     def validate_paid_at(self):
         if self.paid_at.tzinfo is None:
             raise ValueError("paid_at must include a timezone")
+        self.paid_at = _to_utc(self.paid_at)
         return self
 
 
 class PaymentDecisionInput(APIModel):
     approved: bool
-    note: Annotated[str | None, Field(max_length=1000)] = None
+    note: optional_trimmed_str(1000) = None
 
 
 class AssetInput(APIModel):
     product_id: int
-    asset_tag: Annotated[str, Field(min_length=1, max_length=100)]
+    asset_tag: trimmed_str(1, 100)
     condition: AssetCondition = AssetCondition.AVAILABLE
 
 

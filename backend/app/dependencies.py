@@ -7,7 +7,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
-from app.core.security import decode_access_token
+from app.core.security import decode_access_token, verify_password_fingerprint
 from app.models import Business, BusinessStatus, User, UserRole
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/auth/login")
@@ -23,11 +23,15 @@ def current_user(
         headers={"WWW-Authenticate": "Bearer"},
     )
     try:
-        user_id = int(decode_access_token(token)["sub"])
+        payload = decode_access_token(token)
+        user_id = int(payload["sub"])
     except (jwt.InvalidTokenError, KeyError, TypeError, ValueError):
         raise unauthorized from None
     user = db.scalar(select(User).where(User.id == user_id, User.is_active.is_(True)))
     if user is None:
+        raise unauthorized
+    token_pv = payload.get("pv")
+    if token_pv is not None and not verify_password_fingerprint(token_pv, user.password_hash):
         raise unauthorized
     return user
 

@@ -30,6 +30,12 @@ def price_configured(item: Product | RentalPackage) -> bool:
     )
 
 
+def _as_utc(value: datetime) -> datetime:
+    if value.tzinfo is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc)
+
+
 def calculate_line_total(
     item: Product | RentalPackage,
     quantity: int,
@@ -48,7 +54,7 @@ def calculate_line_total(
     if item.pricing_basis == "duration":
         if item.billing_interval_minutes is None:
             raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="A billing interval is not configured")
-        minutes = Decimal(str((ends_at - starts_at).total_seconds())) / Decimal(60)
+        minutes = Decimal(str((_as_utc(ends_at) - _as_utc(starts_at)).total_seconds())) / Decimal(60)
         raw_units = minutes / Decimal(item.billing_interval_minutes)
         if item.rounding_rule == "ceil":
             units = raw_units.to_integral_value(rounding=ROUND_CEILING)

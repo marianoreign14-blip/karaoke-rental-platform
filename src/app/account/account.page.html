@@ -72,6 +72,10 @@
           </div>
           @if (mode === 'register') {
           <small>Use at least 12 characters.</small>
+          } @else {
+          <div class="auth-helper-row">
+            <a routerLink="/forgot-password">Forgot password?</a>
+          </div>
           }
         </div>
         <button type="submit" [disabled]="saving">
@@ -91,13 +95,36 @@
     </section>
     } @else if (user.role === 'business_pending') {
     <section class="auth-panel" aria-live="polite">
-      <p class="eyebrow">BUSINESS REGISTRATION</p>
-      <h1>Application under review</h1>
+      <p class="eyebrow">BUSINESS APPLICATION STATUS</p>
+      <h1>
+        {{ businessApplication?.status === 'rejected' ? 'Application not approved' : 'Application under review' }}
+      </h1>
       <p>
-        Your business registration is waiting for platform administrator approval. Business management access will be
-        enabled after approval.
+        @if (businessApplication?.status === 'rejected') { Your business application was not approved. Contact platform
+        support for more information. } @else { Your business registration is waiting for platform administrator
+        approval. Business management access will be enabled once approved. }
       </p>
-      <button class="text-button" type="button" (click)="signOut()">Sign out</button>
+      @if (businessApplication) {
+      <div class="application-meta">
+        <div><span>Business name</span><strong>{{ businessApplication.name }}</strong></div>
+        <div>
+          <span>Status</span><strong style="text-transform: capitalize">{{ businessApplication.status }}</strong>
+        </div>
+        <div><span>Contact email</span><strong>{{ businessApplication.contact_email || user.email }}</strong></div>
+        <div><span>Contact phone</span><strong>{{ businessApplication.contact_phone || '—' }}</strong></div>
+        <div><span>Address</span><strong>{{ businessApplication.address || '—' }}</strong></div>
+        <div><span>Submitted</span><strong>{{ businessApplication.created_at | date: 'medium' }}</strong></div>
+        @if (businessApplication.approved_at) {
+        <div><span>Approved</span><strong>{{ businessApplication.approved_at | date: 'medium' }}</strong></div>
+        }
+      </div>
+      }
+      <div class="order-actions">
+        <button class="secondary-button" type="button" (click)="checkApprovalStatus(true)" [disabled]="loading">
+          {{ loading ? 'Checking…' : 'Check approval status' }}
+        </button>
+        <button class="text-button" type="button" (click)="signOut()">Sign out</button>
+      </div>
     </section>
     } @else {
     <section class="page-heading">
@@ -113,6 +140,50 @@
         <a class="secondary-button" routerLink="/platform">Platform administration</a>
         }
         <button class="text-button" type="button" (click)="signOut()">Sign out</button>
+      </div>
+    </section>
+
+    <section class="kpi-strip" aria-label="Customer overview">
+      <article class="kpi-card"><span>Total orders</span><strong>{{ orders.length }}</strong></article>
+      <article class="kpi-card"><span>Active rentals</span><strong>{{ activeOrderCount }}</strong></article>
+      <article class="kpi-card">
+        <span>Unpaid balance</span>
+        <strong>{{ totalUnpaidBalanceCents / 100 | currency: 'PHP' : 'symbol' : '1.2-2' : 'en-PH' }}</strong>
+      </article>
+      <article class="kpi-card"><span>Unread notifications</span><strong>{{ unreadNotifications }}</strong></article>
+    </section>
+
+    <section class="profile-panel" aria-labelledby="notifications-title">
+      <div>
+        <p class="eyebrow">UPDATES</p>
+        <h2 id="notifications-title">
+          Notifications @if (unreadNotifications > 0) {
+          <span class="unread-pill">{{ unreadNotifications }}</span>
+          }
+        </h2>
+        @if (unreadNotifications > 0) {
+        <button class="text-button" type="button" (click)="markAllNotificationsRead()">Mark all read</button>
+        }
+      </div>
+      <div class="notification-list">
+        @for (item of notifications; track item.id) {
+        <article class="notification-item" [class.unread]="!item.is_read">
+          <div>
+            <strong>{{ item.title }}</strong>
+            <p>{{ item.message }}</p>
+            <small>{{ item.created_at | date: 'short' }}</small>
+          </div>
+          <div class="notification-actions">
+            @if (item.link) {
+            <a class="details-link" [routerLink]="item.link" (click)="markNotificationRead(item)">View</a>
+            } @if (!item.is_read) {
+            <button class="text-button" type="button" (click)="markNotificationRead(item)">Mark read</button>
+            }
+          </div>
+        </article>
+        } @empty {
+        <p class="policy-note">No notifications yet. Order and payment updates will appear here.</p>
+        }
       </div>
     </section>
 
@@ -134,15 +205,65 @@
       </form>
     </section>
 
+    <section class="profile-panel">
+      <div>
+        <p class="eyebrow">ACCOUNT SECURITY</p>
+        <h2>Change password</h2>
+      </div>
+      <form class="profile-form" (ngSubmit)="changePassword()">
+        <label>
+          Current password
+          <input
+            [(ngModel)]="currentPassword"
+            name="currentPassword"
+            type="password"
+            autocomplete="current-password"
+            required
+          />
+        </label>
+        <label>
+          New password (12+ chars)
+          <input
+            [(ngModel)]="newPassword"
+            name="newPassword"
+            type="password"
+            autocomplete="new-password"
+            minlength="12"
+            required
+          />
+        </label>
+        <label>
+          Confirm new password
+          <input
+            [(ngModel)]="confirmPassword"
+            name="confirmPassword"
+            type="password"
+            autocomplete="new-password"
+            minlength="12"
+            required
+          />
+        </label>
+        <button type="submit" [disabled]="saving">Update password</button>
+      </form>
+    </section>
+
     <section class="orders-section">
       <div class="section-title">
         <div>
           <p class="eyebrow">RENTAL HISTORY</p>
           <h2>Your orders</h2>
         </div>
-        @if (loading) {
-        <ion-spinner name="crescent"></ion-spinner>
-        }
+        <div class="filter-bar" style="margin: 0">
+          <select [(ngModel)]="orderFilter" name="orderFilter" aria-label="Filter orders by status">
+            <option value="all">All orders ({{ orders.length }})</option>
+            <option value="active">Active & pending ({{ activeOrderCount }})</option>
+            <option value="completed">Completed</option>
+            <option value="closed">Cancelled & rejected</option>
+          </select>
+          @if (loading) {
+          <ion-spinner name="crescent"></ion-spinner>
+          }
+        </div>
       </div>
       @if (!loading && orders.length === 0) {
       <div class="empty-state">
@@ -150,15 +271,19 @@
         <p>When you submit a request from the catalog, its status and details will appear here.</p>
         <a routerLink="/home">Browse equipment</a>
       </div>
-      } @for (order of orders; track order.id) {
+      } @else if (!loading && filteredOrders.length === 0) {
+      <div class="empty-state">
+        <p>No orders match the selected filter.</p>
+      </div>
+      } @for (order of filteredOrders; track order.id) {
       <article class="order-card">
         <header>
           <div>
-            <p class="eyebrow">ORDER #{{ order.id }}</p>
+            <p class="eyebrow">ORDER #{{ order.id }} · {{ order.business_name }}</p>
             <h3>{{ order.starts_at | date: 'medium' }} – {{ order.ends_at | date: 'medium' }}</h3>
           </div>
           <div class="status-pills">
-            <span class="status">{{ order.status.replace('_', ' ') }}</span>
+            <span class="status">{{ order.status.replaceAll('_', ' ') }}</span>
             <span class="status payment">{{ paymentStatus(order.payment_status) }}</span>
           </div>
         </header>
@@ -183,7 +308,10 @@
         <div class="history-list">
           <h4>Change and cancellation requests</h4>
           @for (request of order.requests; track request.id) {
-          <p>{{ request.kind }} · {{ request.status }} · {{ request.reason }}</p>
+          <p>
+            {{ request.kind }} · {{ request.status }} · {{ request.reason }} @if (request.decision_note) { · Note: {{
+            request.decision_note }} }
+          </p>
           }
         </div>
         } @if (order.payments.length > 0) {
@@ -191,10 +319,10 @@
           <h4>Payment history</h4>
           @for (payment of order.payments; track payment.id) {
           <p>
-            {{ payment.paid_at | date: 'short' }} · {{ payment.amount_cents / 100 | currency: 'PHP' : 'symbol' : '1.2-2'
-            : 'en-PH' }} · {{ payment.method }} · {{ payment.status }} @if (payment.reference_number) { · Ref {{
-            payment.reference_number }} } @if (payment.verified_by_id) { · Reviewed by admin #{{ payment.verified_by_id
-            }} }
+            {{ payment.paid_at | date: 'short' }} · {{ payment.kind }} · {{ payment.amount_cents / 100 | currency: 'PHP'
+            : 'symbol' : '1.2-2' : 'en-PH' }} · {{ paymentMethodLabel(payment.method) }} · {{ payment.status }} @if
+            (payment.reference_number) { · Ref {{ payment.reference_number }} } @if (payment.notes) { · {{ payment.notes
+            }} } @if (payment.verified_by_id) { · Reviewed by admin #{{ payment.verified_by_id }} }
           </p>
           @if (payment.proof_available) {
           <button type="button" class="text-button" (click)="viewPaymentProof(order.id, payment.id)">
@@ -209,20 +337,23 @@
           <summary>Order activity</summary>
           @for (event of order.history; track $index) {
           <p>
-            {{ event.created_at | date: 'short' }} · {{ event.action.replace('_', ' ') }} · admin/customer #{{
+            {{ event.created_at | date: 'short' }} · {{ event.action.replaceAll('_', ' ') }} · account #{{
             event.actor_id }}
           </p>
           }
         </details>
         }
         <div class="order-actions">
-          @if (canRequest(order)) {
+          <a class="details-link" [routerLink]="['/orders', order.id]">View details & receipt →</a>
+          @if (canRequest(order) && !hasPendingRequest(order)) {
           <button class="secondary-button" type="button" (click)="beginModification(order)">Request a change</button>
           <button class="text-button danger" type="button" (click)="requestCancellation(order)">
             Request cancellation
           </button>
+          } @else if (canRequest(order) && hasPendingRequest(order)) {
+          <span class="policy-note">A change or cancellation request is awaiting administrator review.</span>
           } @if (order.balance_cents > 0 && canRequest(order)) {
-          <button class="secondary-button" type="button" (click)="paymentOrderId = order.id">
+          <button class="secondary-button" type="button" (click)="openPaymentForm(order)">
             Submit payment information
           </button>
           }
@@ -323,7 +454,7 @@
             } @else {
             <button type="button" (click)="submitPayment()" [disabled]="saving">Submit for verification</button>
             }
-            <button class="text-button" type="button" (click)="paymentOrderId = null">Close</button>
+            <button class="text-button" type="button" (click)="closePaymentForm()">Close</button>
           </div>
           <p class="policy-note">
             Submitted payment information does not change your paid balance until verified by an administrator.

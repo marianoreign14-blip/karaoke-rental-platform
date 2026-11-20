@@ -2,17 +2,23 @@ import { CommonModule, CurrencyPipe, DatePipe } from '@angular/common';
 import { ChangeDetectorRef, Component, inject, ViewChild } from '@angular/core';
 import type { ElementRef, OnDestroy, OnInit } from '@angular/core';
 import { FormsModule } from '@angular/forms';
-import { RouterLink } from '@angular/router';
+import { Router, RouterLink } from '@angular/router';
+import { IonContent, IonHeader } from '@ionic/angular';
 import type { Observable } from 'rxjs';
 import { firstValueFrom } from 'rxjs';
 
-import { ApiService } from '../core/api.service';
+import { ApiService, extractApiError } from '../core/api.service';
 import type {
-  Customer,
+  AdminOrderDetail,
+  AdminPaymentRecord,
   Business,
+  BusinessAuditLog,
   BusinessCategory,
   BusinessStaff,
+  CalendarEntry,
+  Customer,
   InventoryAsset,
+  NotificationItem,
   OrderRequestReview,
   PaymentEntry,
   Product,
@@ -23,7 +29,19 @@ import type {
 } from '../core/api.service';
 
 type AdminSection =
-  'orders' | 'products' | 'classifications' | 'packages' | 'inventory' | 'customers' | 'reports' | 'settings' | 'staff';
+  | 'orders'
+  | 'transactions'
+  | 'calendar'
+  | 'products'
+  | 'classifications'
+  | 'packages'
+  | 'inventory'
+  | 'customers'
+  | 'reports'
+  | 'notifications'
+  | 'settings'
+  | 'staff'
+  | 'profile';
 type PricingBasis = 'unconfigured' | 'per_rental' | 'duration';
 type PackageDraft = { product_id: number; quantity: number };
 
@@ -32,33 +50,59 @@ type PackageDraft = { product_id: number; quantity: number };
   templateUrl: './admin.page.html',
   styleUrls: ['./admin.page.scss'],
   standalone: true,
-  imports: [CommonModule, CurrencyPipe, DatePipe, FormsModule, RouterLink],
+  imports: [CommonModule, CurrencyPipe, DatePipe, FormsModule, RouterLink, IonContent, IonHeader],
 })
 export class AdminPage implements OnInit, OnDestroy {
+  private readonly api = inject(ApiService);
+  private readonly router = inject(Router);
   private readonly changeDetector = inject(ChangeDetectorRef);
   @ViewChild('productNameInput') private productNameInput?: ElementRef<HTMLInputElement>;
   @ViewChild('productImageInput') private productImageInput?: ElementRef<HTMLInputElement>;
   @ViewChild('packageImageInput') private packageImageInput?: ElementRef<HTMLInputElement>;
+  @ViewChild('businessLogoInput') private businessLogoInput?: ElementRef<HTMLInputElement>;
+  @ViewChild('businessBannerInput') private businessBannerInput?: ElementRef<HTMLInputElement>;
 
+  readonly currentUser = this.api.user;
+  readonly isBusinessAdmin = this.api.isBusinessAdmin;
   readonly sections: { id: AdminSection; label: string }[] = [
     { id: 'orders', label: 'Orders & payments' },
+    { id: 'transactions', label: 'Transactions' },
+    { id: 'calendar', label: 'Booking calendar' },
     { id: 'products', label: 'Products' },
     { id: 'classifications', label: 'Classifications' },
     { id: 'packages', label: 'Packages' },
     { id: 'inventory', label: 'Inventory' },
     { id: 'customers', label: 'Customers' },
     { id: 'reports', label: 'Reports' },
+    { id: 'notifications', label: 'Notifications' },
     { id: 'settings', label: 'Business settings' },
     { id: 'staff', label: 'Staff' },
+    { id: 'profile', label: 'My profile' },
   ];
   section: AdminSection = 'orders';
   orders: RentalOrder[] = [];
+  orderSearch = '';
+  orderStatusFilter: 'all' | RentalOrder['status'] = 'all';
+  inspectedOrderId: number | null = null;
+  inspectedOrderDetail: AdminOrderDetail | null = null;
+  paymentsLedger: AdminPaymentRecord[] = [];
+  paymentStatusFilter = '';
+  paymentMethodFilter = '';
+  paymentKindFilter = '';
+  calendarEntries: CalendarEntry[] = [];
+  calendarStart = '';
+  calendarEnd = '';
+  notifications: NotificationItem[] = [];
+  unreadNotifications = 0;
   products: Product[] = [];
   packages: RentalPackage[] = [];
   tiers: QualityTier[] = [];
   categories: BusinessCategory[] = [];
   business: Business | null = null;
   staff: BusinessStaff[] = [];
+  auditLogs: BusinessAuditLog[] = [];
+  reportStart = '';
+  reportEnd = '';
   businessProfileDraft = {
     name: '',
     description: '',
@@ -73,6 +117,10 @@ export class AdminPage implements OnInit, OnDestroy {
   businessBannerFile: File | null = null;
   businessLogoPreviewUrl = '';
   businessBannerPreviewUrl = '';
+  protectedBusinessLogoUrl = '';
+  protectedBusinessBannerUrl = '';
+  protectedProductImages: Record<number, string> = {};
+  protectedPackageImages: Record<number, string> = {};
   staffName = '';
   staffEmail = '';
   staffPhone = '';
@@ -83,9 +131,17 @@ export class AdminPage implements OnInit, OnDestroy {
   productSearch = '';
   productStatusFilter: 'all' | 'active' | 'inactive' = 'all';
   assets: InventoryAsset[] = [];
+  assetSearch = '';
+  assetConditionFilter: 'all' | InventoryAsset['condition'] = 'all';
   customers: Customer[] = [];
+  customerSearch = '';
   requests: OrderRequestReview[] = [];
   report: ReportSummary | null = null;
+  myProfileName = '';
+  myProfilePhone = '';
+  myCurrentPassword = '';
+  myNewPassword = '';
+  myConfirmPassword = '';
   loading = false;
   saving = false;
   error = '';
@@ -101,8 +157,8 @@ export class AdminPage implements OnInit, OnDestroy {
   productImagePreviewUrl = '';
   productPrice = '';
   productInitialStock = '';
-  productPriceDrafts: Record<number, string> = {};
-  productStockDrafts: Record<number, string> = {};
+  productPriceDrafts: Record<number, string | number> = {};
+  productStockDrafts: Record<number, string | number> = {};
   productPricingBasis: PricingBasis = 'per_rental';
   productInterval = '';
   productRounding: 'ceil' | 'pro_rata' = 'ceil';
@@ -138,12 +194,33 @@ export class AdminPage implements OnInit, OnDestroy {
   manualPaymentNotes = '';
   paymentProofPreviews: Record<number, string> = {};
 
-  private readonly api = inject(ApiService);
-
   get visibleSections(): { id: AdminSection; label: string }[] {
-    return this.sections.filter(
-      (item) => (item.id !== 'settings' && item.id !== 'staff') || this.api.user()?.role === 'business_admin',
-    );
+    return this.sections.filter((item) => (item.id !== 'settings' && item.id !== 'staff') || this.isBusinessAdmin());
+  }
+
+  get activeOrderCount(): number {
+    return this.orders.filter((order) => order.status === 'pending_admin' || order.status === 'confirmed').length;
+  }
+
+  get pendingPaymentCount(): number {
+    return this.paymentsLedger.filter((entry) => entry.status === 'submitted').length;
+  }
+
+  get activeProducts(): Product[] {
+    return this.products.filter((product) => product.is_active);
+  }
+
+  get filteredOrders(): RentalOrder[] {
+    const term = this.orderSearch.trim().toLowerCase();
+    return this.orders.filter((order) => {
+      const matchesStatus = this.orderStatusFilter === 'all' || order.status === this.orderStatusFilter;
+      const matchesSearch =
+        !term ||
+        String(order.id).includes(term) ||
+        order.customer_name.toLowerCase().includes(term) ||
+        order.lines.some((line) => line.name.toLowerCase().includes(term));
+      return matchesStatus && matchesSearch;
+    });
   }
 
   get filteredProducts(): Product[] {
@@ -159,41 +236,136 @@ export class AdminPage implements OnInit, OnDestroy {
     });
   }
 
+  get filteredAssets(): InventoryAsset[] {
+    const term = this.assetSearch.trim().toLowerCase();
+    return this.assets.filter((asset) => {
+      const matchesCondition = this.assetConditionFilter === 'all' || asset.condition === this.assetConditionFilter;
+      const matchesSearch =
+        !term ||
+        asset.asset_tag.toLowerCase().includes(term) ||
+        asset.product_name.toLowerCase().includes(term) ||
+        asset.category.toLowerCase().includes(term);
+      return matchesCondition && matchesSearch;
+    });
+  }
+
+  get filteredCustomers(): Customer[] {
+    const term = this.customerSearch.trim().toLowerCase();
+    return this.customers.filter(
+      (customer) =>
+        !term ||
+        customer.display_name.toLowerCase().includes(term) ||
+        customer.email.toLowerCase().includes(term) ||
+        (customer.phone || '').toLowerCase().includes(term),
+    );
+  }
+
   ngOnInit(): void {
-    if (this.api.user()?.role !== 'business_admin' && this.api.user()?.role !== 'business_staff') {
+    const signedIn = this.api.user();
+    if (signedIn?.role !== 'business_admin' && signedIn?.role !== 'business_staff') {
       this.error = 'Administrator access is required.';
       return;
     }
-    this.refresh();
+    this.myProfileName = signedIn.display_name;
+    this.myProfilePhone = signedIn.phone || '';
+    void this.refresh();
   }
 
+  ionViewWillEnter(): void {
+    const signedIn = this.api.user();
+    if (signedIn?.role === 'business_admin' || signedIn?.role === 'business_staff') {
+      this.myProfileName = signedIn.display_name;
+      this.myProfilePhone = signedIn.phone || '';
+      void this.refresh();
+    }
+  }
+
+  private loadGeneration = 0;
+
   ngOnDestroy(): void {
+    this.loadGeneration += 1;
     this.releaseProductImagePreview();
     this.releasePackageImagePreview();
     this.releaseBusinessImagePreviews();
+    this.releaseProtectedImageUrls();
     for (const preview of Object.values(this.paymentProofPreviews)) {
       URL.revokeObjectURL(preview);
     }
   }
 
+  signOut(): void {
+    this.loadGeneration += 1;
+    this.orders = [];
+    this.requests = [];
+    this.products = [];
+    this.packages = [];
+    this.assets = [];
+    this.customers = [];
+    this.paymentsLedger = [];
+    this.calendarEntries = [];
+    this.notifications = [];
+    this.unreadNotifications = 0;
+    this.staff = [];
+    this.auditLogs = [];
+    this.business = null;
+    this.report = null;
+    this.inspectedOrderId = null;
+    this.inspectedOrderDetail = null;
+    this.loading = false;
+    this.api.logout('You have signed out.');
+    void this.router.navigateByUrl('/account', { replaceUrl: true });
+  }
+
   async refresh(): Promise<void> {
+    const generation = ++this.loadGeneration;
     this.loading = true;
     this.error = '';
     try {
-      const [orders, requests, products, tiers, packages, assets, customers, report, categories, business, staff] =
-        await Promise.all([
-          firstValueFrom(this.api.adminOrders()),
-          firstValueFrom(this.api.adminRequests()),
-          firstValueFrom(this.api.adminProducts()),
-          firstValueFrom(this.api.adminTiers()),
-          firstValueFrom(this.api.adminPackages()),
-          firstValueFrom(this.api.inventory()),
-          firstValueFrom(this.api.customers()),
-          firstValueFrom(this.api.report()),
-          firstValueFrom(this.api.adminCategories()),
-          firstValueFrom(this.api.businessSettings()),
-          firstValueFrom(this.api.businessStaff()),
-        ]);
+      const reportDates = this.reportDateRange();
+      const calendarDates = this.calendarDateRange();
+      const ownerAccess = this.isBusinessAdmin();
+      const [
+        orders,
+        requests,
+        products,
+        tiers,
+        packages,
+        assets,
+        customers,
+        report,
+        categories,
+        business,
+        staff,
+        auditLogs,
+        paymentsLedger,
+        calendarEntries,
+        notificationFeed,
+      ] = await Promise.all([
+        firstValueFrom(this.api.adminOrders()),
+        firstValueFrom(this.api.adminRequests()),
+        firstValueFrom(this.api.adminProducts()),
+        firstValueFrom(this.api.adminTiers()),
+        firstValueFrom(this.api.adminPackages()),
+        firstValueFrom(this.api.inventory()),
+        firstValueFrom(this.api.customers()),
+        firstValueFrom(this.api.report(reportDates?.starts_at, reportDates?.ends_at)),
+        firstValueFrom(this.api.adminCategories()),
+        firstValueFrom(this.api.businessSettings()),
+        ownerAccess ? firstValueFrom(this.api.businessStaff()) : Promise.resolve([]),
+        ownerAccess ? firstValueFrom(this.api.adminAuditLogs(50)) : Promise.resolve([]),
+        firstValueFrom(
+          this.api.adminPayments({
+            status: this.paymentStatusFilter || undefined,
+            method: this.paymentMethodFilter || undefined,
+            kind: this.paymentKindFilter || undefined,
+          }),
+        ),
+        firstValueFrom(this.api.adminCalendar(calendarDates?.starts_at, calendarDates?.ends_at)),
+        firstValueFrom(this.api.notifications(false, 50)),
+      ]);
+      if (generation !== this.loadGeneration || !this.api.hasValidSession()) {
+        return;
+      }
       this.orders = orders;
       this.requests = requests;
       this.products = products;
@@ -211,24 +383,289 @@ export class AdminPage implements OnInit, OnDestroy {
         brand_accent: business.brand_accent,
       };
       this.staff = staff;
+      this.auditLogs = auditLogs;
+      this.paymentsLedger = paymentsLedger;
+      this.calendarEntries = calendarEntries;
+      this.notifications = notificationFeed.items;
+      this.unreadNotifications = notificationFeed.unread_count;
       this.productPriceDrafts = {};
       this.productStockDrafts = {};
       for (const product of products) {
         this.productPriceDrafts[product.id] = (product.price_cents / 100).toFixed(2);
         this.productStockDrafts[product.id] = String(product.stock_count);
       }
-      if (!this.productId && !this.productQualityId) {
-        this.productQualityId = this.standardQualityId();
+      if (!this.productId) {
+        if (!this.productQualityId) {
+          this.productQualityId = this.standardQualityId();
+        }
+        const activeCategoryExists = categories.some(
+          (cat) => cat.is_active && cat.name.toLowerCase() === this.productCategory.toLowerCase(),
+        );
+        if (!activeCategoryExists) {
+          this.productCategory =
+            categories.find((cat) => cat.is_active && cat.name.toLowerCase() === 'karaoke')?.name ||
+            categories.find((cat) => cat.is_active)?.name ||
+            '';
+        }
       }
       this.packages = packages;
       this.assets = assets;
       this.customers = customers;
       this.report = report;
+      if (this.inspectedOrderId !== null) {
+        if (orders.some((order) => order.id === this.inspectedOrderId)) {
+          const detail = await firstValueFrom(this.api.adminOrderDetail(this.inspectedOrderId));
+          if (generation !== this.loadGeneration || !this.api.hasValidSession()) {
+            return;
+          }
+          this.inspectedOrderDetail = detail;
+        } else {
+          this.inspectedOrderId = null;
+          this.inspectedOrderDetail = null;
+        }
+      }
+    } catch (error) {
+      if (generation !== this.loadGeneration || !this.api.hasValidSession()) {
+        return;
+      }
+      this.error = this.errorMessage(error);
+    } finally {
+      if (generation === this.loadGeneration) {
+        this.loading = false;
+      }
+      this.changeDetector.markForCheck();
+    }
+  }
+
+  async toggleOrderDetail(orderId: number): Promise<void> {
+    if (this.inspectedOrderId === orderId) {
+      this.inspectedOrderId = null;
+      this.inspectedOrderDetail = null;
+      return;
+    }
+    this.error = '';
+    try {
+      this.inspectedOrderDetail = await this.firstValue(this.api.adminOrderDetail(orderId));
+      this.inspectedOrderId = orderId;
+    } catch (error) {
+      this.error = this.errorMessage(error);
+    } finally {
+      this.changeDetector.markForCheck();
+    }
+  }
+
+  async loadPayments(): Promise<void> {
+    this.loading = true;
+    this.error = '';
+    try {
+      this.paymentsLedger = await this.firstValue(
+        this.api.adminPayments({
+          status: this.paymentStatusFilter || undefined,
+          method: this.paymentMethodFilter || undefined,
+          kind: this.paymentKindFilter || undefined,
+        }),
+      );
     } catch (error) {
       this.error = this.errorMessage(error);
     } finally {
       this.loading = false;
       this.changeDetector.markForCheck();
+    }
+  }
+
+  async decideLedgerPayment(entry: AdminPaymentRecord, approved: boolean): Promise<void> {
+    const note = window.prompt(approved ? 'Verification note (optional)' : 'Reason for rejection');
+    if (note === null) {
+      return;
+    }
+    this.error = '';
+    try {
+      await this.firstValue(this.api.decidePayment(entry.order_id, entry.id, approved, note.trim() || null));
+      this.notice = `Payment entry #${entry.id} ${approved ? 'verified' : 'rejected'}.`;
+      await this.refresh();
+    } catch (error) {
+      this.error = this.errorMessage(error);
+    } finally {
+      this.changeDetector.markForCheck();
+    }
+  }
+
+  async loadCalendar(): Promise<void> {
+    if ((this.calendarStart && !this.calendarEnd) || (!this.calendarStart && this.calendarEnd)) {
+      this.error = 'Select both a start date and end date to filter the booking calendar.';
+      return;
+    }
+    const range = this.calendarDateRange();
+    if (this.calendarStart && this.calendarEnd && !range) {
+      this.error = 'Calendar end date must be after the start date.';
+      return;
+    }
+    this.loading = true;
+    this.error = '';
+    try {
+      this.calendarEntries = await this.firstValue(this.api.adminCalendar(range?.starts_at, range?.ends_at));
+    } catch (error) {
+      this.error = this.errorMessage(error);
+    } finally {
+      this.loading = false;
+      this.changeDetector.markForCheck();
+    }
+  }
+
+  clearCalendarFilter(): void {
+    this.calendarStart = '';
+    this.calendarEnd = '';
+    void this.loadCalendar();
+  }
+
+  async markNotificationRead(item: NotificationItem): Promise<void> {
+    if (item.is_read) {
+      return;
+    }
+    try {
+      await this.firstValue(this.api.markNotificationRead(item.id));
+      item.is_read = true;
+      this.unreadNotifications = Math.max(0, this.unreadNotifications - 1);
+      this.changeDetector.markForCheck();
+    } catch (error) {
+      this.error = this.errorMessage(error);
+    }
+  }
+
+  async markAllNotificationsRead(): Promise<void> {
+    try {
+      await this.firstValue(this.api.markAllNotificationsRead());
+      this.notifications = this.notifications.map((item) => ({ ...item, is_read: true }));
+      this.unreadNotifications = 0;
+      this.notice = 'All notifications marked as read.';
+      this.changeDetector.markForCheck();
+    } catch (error) {
+      this.error = this.errorMessage(error);
+    }
+  }
+
+  async saveMyProfile(): Promise<void> {
+    if (!this.myProfileName.trim()) {
+      this.error = 'Display name is required.';
+      return;
+    }
+    this.saving = true;
+    this.error = '';
+    this.notice = '';
+    try {
+      const updated = await this.firstValue(
+        this.api.updateProfile(this.myProfileName.trim(), this.myProfilePhone.trim() || null),
+      );
+      this.myProfileName = updated.display_name;
+      this.myProfilePhone = updated.phone || '';
+      this.notice = 'Your profile has been updated.';
+    } catch (error) {
+      this.error = this.errorMessage(error);
+    } finally {
+      this.saving = false;
+      this.changeDetector.markForCheck();
+    }
+  }
+
+  async changeMyPassword(): Promise<void> {
+    this.error = '';
+    this.notice = '';
+    if (!this.myCurrentPassword) {
+      this.error = 'Enter your current password.';
+      return;
+    }
+    if (this.myNewPassword.length < 12) {
+      this.error = 'New password must be at least 12 characters.';
+      return;
+    }
+    if (this.myNewPassword !== this.myConfirmPassword) {
+      this.error = 'New password confirmation does not match.';
+      return;
+    }
+    this.saving = true;
+    try {
+      const response = await this.firstValue(this.api.changePassword(this.myCurrentPassword, this.myNewPassword));
+      this.myCurrentPassword = '';
+      this.myNewPassword = '';
+      this.myConfirmPassword = '';
+      this.notice = response.message;
+    } catch (error) {
+      this.error = this.errorMessage(error);
+    } finally {
+      this.saving = false;
+      this.changeDetector.markForCheck();
+    }
+  }
+
+  async loadReport(): Promise<void> {
+    if ((this.reportStart && !this.reportEnd) || (!this.reportStart && this.reportEnd)) {
+      this.error = 'Select both a start date and end date to filter reports.';
+      return;
+    }
+    const range = this.reportDateRange();
+    if (this.reportStart && this.reportEnd && !range) {
+      this.error = 'Report end date must be after the start date.';
+      return;
+    }
+    this.loading = true;
+    this.error = '';
+    try {
+      this.report = await this.firstValue(this.api.report(range?.starts_at, range?.ends_at));
+    } catch (error) {
+      this.error = this.errorMessage(error);
+    } finally {
+      this.loading = false;
+      this.changeDetector.markForCheck();
+    }
+  }
+
+  clearReportFilter(): void {
+    this.reportStart = '';
+    this.reportEnd = '';
+    void this.loadReport();
+  }
+
+  async loadProtectedProductImage(productId: number): Promise<void> {
+    if (this.protectedProductImages[productId]) {
+      return;
+    }
+    try {
+      const blob = await this.firstValue(this.api.adminProductImage(productId));
+      this.protectedProductImages[productId] = URL.createObjectURL(blob);
+      this.changeDetector.markForCheck();
+    } catch {
+      // No stored binary image available.
+    }
+  }
+
+  async loadProtectedPackageImage(packageId: number): Promise<void> {
+    if (this.protectedPackageImages[packageId]) {
+      return;
+    }
+    try {
+      const blob = await this.firstValue(this.api.adminPackageImage(packageId));
+      this.protectedPackageImages[packageId] = URL.createObjectURL(blob);
+      this.changeDetector.markForCheck();
+    } catch {
+      // No stored binary image available.
+    }
+  }
+
+  async loadProtectedBusinessImage(kind: 'logo' | 'banner'): Promise<void> {
+    if ((kind === 'logo' && this.protectedBusinessLogoUrl) || (kind === 'banner' && this.protectedBusinessBannerUrl)) {
+      return;
+    }
+    try {
+      const blob = await this.firstValue(this.api.adminBusinessImage(kind));
+      const url = URL.createObjectURL(blob);
+      if (kind === 'logo') {
+        this.protectedBusinessLogoUrl = url;
+      } else {
+        this.protectedBusinessBannerUrl = url;
+      }
+      this.changeDetector.markForCheck();
+    } catch {
+      // No stored binary image available.
     }
   }
 
@@ -316,13 +753,15 @@ export class AdminPage implements OnInit, OnDestroy {
   }
 
   async saveProduct(): Promise<void> {
-    const price = Number(this.productPrice);
-    const initialStock = Number(this.productInitialStock);
+    const rawPrice = this.textValue(this.productPrice);
+    const rawInitialStock = this.textValue(this.productInitialStock);
+    const price = Number(rawPrice);
+    const initialStock = Number(rawInitialStock);
     if (
       !this.productName.trim() ||
       !this.productCategory.trim() ||
       !this.productQualityId ||
-      this.productPrice.trim() === '' ||
+      rawPrice === '' ||
       !Number.isFinite(price) ||
       price < 0
     ) {
@@ -331,10 +770,7 @@ export class AdminPage implements OnInit, OnDestroy {
     }
     if (
       !this.productId &&
-      (this.productInitialStock.trim() === '' ||
-        !Number.isInteger(initialStock) ||
-        initialStock < 0 ||
-        initialStock > 1000)
+      (rawInitialStock === '' || !Number.isInteger(initialStock) || initialStock < 0 || initialStock > 1000)
     ) {
       this.error = 'Enter an initial stock quantity from 0 to 1,000.';
       return;
@@ -342,7 +778,7 @@ export class AdminPage implements OnInit, OnDestroy {
     const duplicate = this.products.some(
       (product) =>
         product.id !== this.productId &&
-        product.category === this.productCategory &&
+        product.category.toLowerCase() === this.productCategory.trim().toLowerCase() &&
         product.quality_tier_id === Number(this.productQualityId) &&
         product.name.trim().toLowerCase() === this.productName.trim().toLowerCase(),
     );
@@ -350,7 +786,8 @@ export class AdminPage implements OnInit, OnDestroy {
       this.error = 'A product with this name, category, and quality classification already exists.';
       return;
     }
-    if (this.productPricingBasis === 'duration' && (!this.productInterval || Number(this.productInterval) <= 0)) {
+    const rawInterval = this.textValue(this.productInterval);
+    if (this.productPricingBasis === 'duration' && (!rawInterval || Number(rawInterval) <= 0)) {
       this.error = 'Duration pricing requires an administrator-defined billing interval in minutes.';
       return;
     }
@@ -362,14 +799,13 @@ export class AdminPage implements OnInit, OnDestroy {
         this.api.saveProduct(
           {
             name: this.productName.trim(),
-            description: this.productDescription,
-            category: this.productCategory,
+            description: this.productDescription.trim(),
+            category: this.productCategory.trim(),
             quality_tier_id: Number(this.productQualityId),
             price_cents: Math.round(price * 100),
             pricing_basis: this.productPricingBasis === 'unconfigured' ? null : this.productPricingBasis,
-            billing_interval_minutes: this.productPricingBasis === 'duration' ? Number(this.productInterval) : null,
+            billing_interval_minutes: this.productPricingBasis === 'duration' ? Number(rawInterval) : null,
             rounding_rule: this.productPricingBasis === 'duration' ? this.productRounding : null,
-            image_url: this.productImageUrl || null,
             is_active: this.productActive,
             ...(!this.productId ? { initial_stock: initialStock } : {}),
           },
@@ -384,8 +820,13 @@ export class AdminPage implements OnInit, OnDestroy {
           );
           this.productImageUrl = uploadedImage.image_url;
           this.clearProductImageSelection();
+          if (this.protectedProductImages[savedProduct.id]) {
+            URL.revokeObjectURL(this.protectedProductImages[savedProduct.id]);
+            delete this.protectedProductImages[savedProduct.id];
+          }
         } catch (error) {
           this.error = `Product details were saved, but the image could not be uploaded: ${this.errorMessage(error)}`;
+          await this.refresh();
           return;
         }
       }
@@ -400,9 +841,32 @@ export class AdminPage implements OnInit, OnDestroy {
     }
   }
 
+  async deleteProduct(product: Product): Promise<void> {
+    if (!window.confirm(`Delete "${product.name}"? Products referenced by orders or packages cannot be deleted.`)) {
+      return;
+    }
+    this.saving = true;
+    this.error = '';
+    this.notice = '';
+    try {
+      await this.firstValue(this.api.deleteProduct(product.id));
+      if (this.productId === product.id) {
+        this.newProduct();
+      }
+      this.notice = `Product "${product.name}" deleted.`;
+      await this.refresh();
+    } catch (error) {
+      this.error = this.errorMessage(error);
+    } finally {
+      this.saving = false;
+      this.changeDetector.markForCheck();
+    }
+  }
+
   async saveInlinePrice(product: Product): Promise<void> {
-    const price = Number(this.productPriceDrafts[product.id]);
-    if (this.productPriceDrafts[product.id]?.trim() === '' || !Number.isFinite(price) || price < 0) {
+    const rawPrice = this.textValue(this.productPriceDrafts[product.id]);
+    const price = Number(rawPrice);
+    if (rawPrice === '' || !Number.isFinite(price) || price < 0) {
       this.error = 'Enter a valid non-negative rental price.';
       return;
     }
@@ -423,13 +887,9 @@ export class AdminPage implements OnInit, OnDestroy {
   }
 
   async saveInlineStock(product: Product): Promise<void> {
-    const quantity = Number(this.productStockDrafts[product.id]);
-    if (
-      this.productStockDrafts[product.id]?.trim() === '' ||
-      !Number.isInteger(quantity) ||
-      quantity < 0 ||
-      quantity > 1000
-    ) {
+    const rawStock = this.textValue(this.productStockDrafts[product.id]);
+    const quantity = Number(rawStock);
+    if (rawStock === '' || !Number.isInteger(quantity) || quantity < 0 || quantity > 1000) {
       this.error = 'Stock must be a whole number from 0 to 1,000.';
       return;
     }
@@ -472,6 +932,7 @@ export class AdminPage implements OnInit, OnDestroy {
       this.notice = 'Quality label saved.';
       this.qualityId = null;
       this.qualityName = '';
+      this.qualityActive = true;
       await this.refresh();
     } catch (error) {
       this.error = this.errorMessage(error);
@@ -516,6 +977,11 @@ export class AdminPage implements OnInit, OnDestroy {
   }
 
   async saveBusinessSettings(): Promise<void> {
+    const name = this.businessProfileDraft.name.trim();
+    if (name.length < 2) {
+      this.error = 'Business name must be at least 2 characters.';
+      return;
+    }
     this.saving = true;
     this.error = '';
     this.notice = '';
@@ -523,9 +989,11 @@ export class AdminPage implements OnInit, OnDestroy {
       this.business = await this.firstValue(
         this.api.updateBusinessSettings({
           ...this.businessProfileDraft,
-          contact_email: this.businessProfileDraft.contact_email || null,
-          contact_phone: this.businessProfileDraft.contact_phone || null,
-          address: this.businessProfileDraft.address || null,
+          name,
+          description: this.businessProfileDraft.description.trim(),
+          contact_email: this.businessProfileDraft.contact_email.trim() || null,
+          contact_phone: this.businessProfileDraft.contact_phone.trim() || null,
+          address: this.businessProfileDraft.address.trim() || null,
         }),
       );
       this.notice = 'Business profile and storefront branding saved.';
@@ -575,8 +1043,22 @@ export class AdminPage implements OnInit, OnDestroy {
       this.business = await this.firstValue(this.api.uploadBusinessImage(kind, image));
       if (kind === 'logo') {
         this.businessLogoFile = null;
+        if (this.businessLogoInput) {
+          this.businessLogoInput.nativeElement.value = '';
+        }
+        if (this.protectedBusinessLogoUrl) {
+          URL.revokeObjectURL(this.protectedBusinessLogoUrl);
+          this.protectedBusinessLogoUrl = '';
+        }
       } else {
         this.businessBannerFile = null;
+        if (this.businessBannerInput) {
+          this.businessBannerInput.nativeElement.value = '';
+        }
+        if (this.protectedBusinessBannerUrl) {
+          URL.revokeObjectURL(this.protectedBusinessBannerUrl);
+          this.protectedBusinessBannerUrl = '';
+        }
       }
       this.releaseBusinessImagePreviews(kind);
       this.notice = `Storefront ${kind} uploaded.`;
@@ -667,6 +1149,28 @@ export class AdminPage implements OnInit, OnDestroy {
     this.section = 'packages';
   }
 
+  async deletePackage(rentalPackage: RentalPackage): Promise<void> {
+    if (!window.confirm(`Delete package "${rentalPackage.name}"? Packages referenced by orders cannot be deleted.`)) {
+      return;
+    }
+    this.saving = true;
+    this.error = '';
+    this.notice = '';
+    try {
+      await this.firstValue(this.api.deletePackage(rentalPackage.id));
+      if (this.packageId === rentalPackage.id) {
+        this.newPackage();
+      }
+      this.notice = `Package "${rentalPackage.name}" deleted.`;
+      await this.refresh();
+    } catch (error) {
+      this.error = this.errorMessage(error);
+    } finally {
+      this.saving = false;
+      this.changeDetector.markForCheck();
+    }
+  }
+
   onPackageImageSelected(event: Event): void {
     const input = event.currentTarget;
     if (!(input instanceof HTMLInputElement)) {
@@ -717,12 +1221,30 @@ export class AdminPage implements OnInit, OnDestroy {
       this.error = 'Enter a package name and at least one equipment component.';
       return;
     }
-    if (this.packagePricingBasis !== 'unconfigured' && (!this.packagePrice || Number(this.packagePrice) < 0)) {
+    const rawPrice = this.textValue(this.packagePrice);
+    const price = Number(rawPrice);
+    if (rawPrice !== '' && (!Number.isFinite(price) || price < 0)) {
+      this.error = 'Enter a valid non-negative package price.';
+      return;
+    }
+    if (this.packagePricingBasis !== 'unconfigured' && (rawPrice === '' || !Number.isFinite(price) || price < 0)) {
       this.error = 'Enter a valid package price before configuring its pricing basis.';
       return;
     }
-    if (this.packagePricingBasis === 'duration' && (!this.packageInterval || Number(this.packageInterval) <= 0)) {
+    const rawInterval = this.textValue(this.packageInterval);
+    if (this.packagePricingBasis === 'duration' && (!rawInterval || Number(rawInterval) <= 0)) {
       this.error = 'Duration pricing requires an administrator-defined billing interval in minutes.';
+      return;
+    }
+    if (
+      this.packageComponents.some(
+        (component) =>
+          !Number.isInteger(Number(component.quantity)) ||
+          Number(component.quantity) < 1 ||
+          Number(component.quantity) > 1000,
+      )
+    ) {
+      this.error = 'Each package component quantity must be a whole number from 1 to 1,000.';
       return;
     }
     this.saving = true;
@@ -733,13 +1255,16 @@ export class AdminPage implements OnInit, OnDestroy {
         this.api.savePackage(
           {
             name: this.packageName.trim(),
-            description: this.packageDescription,
-            price_cents: this.packagePrice ? Math.round(Number(this.packagePrice) * 100) : null,
+            description: this.packageDescription.trim(),
+            price_cents: rawPrice !== '' ? Math.round(price * 100) : null,
             pricing_basis: this.packagePricingBasis === 'unconfigured' ? null : this.packagePricingBasis,
-            billing_interval_minutes: this.packagePricingBasis === 'duration' ? Number(this.packageInterval) : null,
+            billing_interval_minutes: this.packagePricingBasis === 'duration' ? Number(rawInterval) : null,
             rounding_rule: this.packagePricingBasis === 'duration' ? this.packageRounding : null,
             is_active: this.packageActive,
-            components: this.packageComponents,
+            components: this.packageComponents.map((component) => ({
+              product_id: component.product_id,
+              quantity: Number(component.quantity),
+            })),
           },
           this.packageId || undefined,
         ),
@@ -752,8 +1277,13 @@ export class AdminPage implements OnInit, OnDestroy {
           );
           this.packageImageUrl = uploadedImage.image_url;
           this.clearPackageImageSelection();
+          if (this.protectedPackageImages[savedPackage.id]) {
+            URL.revokeObjectURL(this.protectedPackageImages[savedPackage.id]);
+            delete this.protectedPackageImages[savedPackage.id];
+          }
         } catch (error) {
           this.error = `Package details were saved, but the image could not be uploaded: ${this.errorMessage(error)}`;
+          await this.refresh();
           return;
         }
       }
@@ -801,16 +1331,49 @@ export class AdminPage implements OnInit, OnDestroy {
       this.notice = `Condition updated for ${asset.asset_tag}.`;
       await this.refresh();
     } catch (error) {
-      this.error = this.errorMessage(error);
+      const message = this.errorMessage(error);
+      await this.refresh();
+      this.error = message;
     } finally {
       this.changeDetector.markForCheck();
     }
   }
 
+  async deleteAsset(asset: InventoryAsset): Promise<void> {
+    if (
+      !window.confirm(
+        `Delete inventory unit "${asset.asset_tag}"? Units with rental allocation history cannot be deleted.`,
+      )
+    ) {
+      return;
+    }
+    this.saving = true;
+    this.error = '';
+    this.notice = '';
+    try {
+      await this.firstValue(this.api.deleteAsset(asset.id));
+      this.notice = `Inventory unit "${asset.asset_tag}" deleted.`;
+      await this.refresh();
+    } catch (error) {
+      this.error = this.errorMessage(error);
+    } finally {
+      this.saving = false;
+      this.changeDetector.markForCheck();
+    }
+  }
+
   async updateOrder(order: RentalOrder, status: RentalOrder['status']): Promise<void> {
+    let note: string | null = null;
+    if (status === 'rejected') {
+      const entered = window.prompt('Reason for rejecting this rental request (optional)', '');
+      if (entered === null) {
+        return;
+      }
+      note = entered.trim() || null;
+    }
     this.error = '';
     try {
-      await this.firstValue(this.api.setOrderStatus(order.id, status, null));
+      await this.firstValue(this.api.setOrderStatus(order.id, status, note));
       this.notice = `Order #${order.id} updated.`;
       await this.refresh();
     } catch (error) {
@@ -839,6 +1402,35 @@ export class AdminPage implements OnInit, OnDestroy {
 
   pendingPayments(order: RentalOrder): PaymentEntry[] {
     return order.payments.filter((entry) => entry.status === 'submitted');
+  }
+
+  decidedPayments(order: RentalOrder): PaymentEntry[] {
+    return order.payments.filter((entry) => entry.status !== 'submitted');
+  }
+
+  canRecordManualPayment(order: RentalOrder): boolean {
+    if (order.status === 'pending_admin' || order.status === 'confirmed') {
+      return true;
+    }
+    if (order.status === 'completed') {
+      return order.balance_cents > 0 || order.paid_cents > 0;
+    }
+    return order.paid_cents > 0;
+  }
+
+  openManualPayment(order: RentalOrder): void {
+    this.manualPaymentOrderId = order.id;
+    this.manualPaymentKind = order.status === 'cancelled' || order.status === 'rejected' ? 'refund' : 'payment';
+    this.manualPaymentAmount = '';
+    this.manualPaymentMethod = 'cash';
+    this.manualPaymentDate = this.localDateTime(new Date());
+    this.manualPaymentReference = '';
+    this.manualPaymentNotes = '';
+    this.error = '';
+  }
+
+  paymentMethodLabel(method: string): string {
+    return method.replaceAll('_', ' ');
   }
 
   async decidePayment(order: RentalOrder, entry: PaymentEntry, approved: boolean): Promise<void> {
@@ -875,8 +1467,17 @@ export class AdminPage implements OnInit, OnDestroy {
   }
 
   async recordManualPayment(): Promise<void> {
-    const amount = Number(this.manualPaymentAmount);
-    if (!this.manualPaymentOrderId || !Number.isFinite(amount) || amount <= 0 || !this.manualPaymentDate) {
+    const rawAmount = this.textValue(this.manualPaymentAmount);
+    const amount = Number(rawAmount);
+    const paidAt = new Date(this.manualPaymentDate);
+    if (
+      !this.manualPaymentOrderId ||
+      rawAmount === '' ||
+      !Number.isFinite(amount) ||
+      amount <= 0 ||
+      !this.manualPaymentDate ||
+      Number.isNaN(paidAt.getTime())
+    ) {
       this.error = 'Enter a valid order, amount, and payment date.';
       return;
     }
@@ -888,9 +1489,9 @@ export class AdminPage implements OnInit, OnDestroy {
           kind: this.manualPaymentKind,
           amount_cents: Math.round(amount * 100),
           method: this.manualPaymentMethod,
-          paid_at: new Date(this.manualPaymentDate).toISOString(),
-          reference_number: this.manualPaymentReference || null,
-          notes: this.manualPaymentNotes || null,
+          paid_at: paidAt.toISOString(),
+          reference_number: this.manualPaymentReference.trim() || null,
+          notes: this.manualPaymentNotes.trim() || null,
         }),
       );
       this.notice = 'Manual payment entry recorded in the order history.';
@@ -1003,8 +1604,50 @@ export class AdminPage implements OnInit, OnDestroy {
     }
   }
 
+  private releaseProtectedImageUrls(): void {
+    if (this.protectedBusinessLogoUrl) {
+      URL.revokeObjectURL(this.protectedBusinessLogoUrl);
+      this.protectedBusinessLogoUrl = '';
+    }
+    if (this.protectedBusinessBannerUrl) {
+      URL.revokeObjectURL(this.protectedBusinessBannerUrl);
+      this.protectedBusinessBannerUrl = '';
+    }
+    for (const url of Object.values(this.protectedProductImages)) {
+      URL.revokeObjectURL(url);
+    }
+    this.protectedProductImages = {};
+    for (const url of Object.values(this.protectedPackageImages)) {
+      URL.revokeObjectURL(url);
+    }
+    this.protectedPackageImages = {};
+  }
+
+  private textValue(value: unknown): string {
+    return String(value ?? '').trim();
+  }
+
+  private reportDateRange(): { starts_at: string; ends_at: string } | null {
+    return this.parseRange(this.reportStart, this.reportEnd);
+  }
+
+  private calendarDateRange(): { starts_at: string; ends_at: string } | null {
+    return this.parseRange(this.calendarStart, this.calendarEnd);
+  }
+
+  private parseRange(startRaw: string, endRaw: string): { starts_at: string; ends_at: string } | null {
+    if (!startRaw || !endRaw) {
+      return null;
+    }
+    const starts = new Date(startRaw);
+    const ends = new Date(endRaw);
+    if (Number.isNaN(starts.getTime()) || Number.isNaN(ends.getTime()) || ends <= starts) {
+      return null;
+    }
+    return { starts_at: starts.toISOString(), ends_at: ends.toISOString() };
+  }
+
   private errorMessage(error: unknown): string {
-    const detail = (error as { error?: { detail?: unknown } })?.error?.detail;
-    return typeof detail === 'string' ? detail : 'The requested change could not be completed. Please try again.';
+    return extractApiError(error, 'The requested change could not be completed. Please try again.');
   }
 }

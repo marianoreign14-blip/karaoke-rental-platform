@@ -10,8 +10,12 @@ class Base(DeclarativeBase):
     pass
 
 
-engine = create_engine(get_settings().database_url, pool_pre_ping=True)
-SessionLocal = sessionmaker(bind=engine, autoflush=False, expire_on_commit=False)
+engine = create_engine(
+    get_settings().database_url,
+    pool_pre_ping=True,
+    pool_recycle=300,
+)
+SessionLocal = sessionmaker(bind=engine, autoflush=False, expire_on_commit=True)
 
 
 def get_db() -> Generator[Session, None, None]:

@@ -57,16 +57,19 @@ export interface PlatformSummary {
   orders: number;
 }
 
-export interface PlatformAuditLog {
+export interface BusinessAuditLog {
   id: number;
   business_id: number | null;
-  business_name: string | null;
   actor_id: number;
   action: string;
   entity_type: string;
   entity_id: number | null;
   details: Record<string, unknown>;
   created_at: string;
+}
+
+export interface PlatformAuditLog extends BusinessAuditLog {
+  business_name: string | null;
 }
 
 export interface Product {
@@ -100,7 +103,9 @@ export type ProductInput = Omit<
   | 'stock_count'
   | 'available_count'
   | 'pricing_configured'
+  | 'image_url'
 > & {
+  image_url?: string | null;
   initial_stock?: number;
 };
 
@@ -240,13 +245,122 @@ export interface Customer {
   display_name: string;
   phone: string | null;
   is_active: boolean;
+  order_count?: number;
   created_at: string;
+}
+
+export interface ProductDetail extends Product {
+  business: Business;
+}
+
+export interface PackageDetail extends RentalPackage {
+  business: Business;
+}
+
+export interface NotificationItem {
+  id: number;
+  business_id: number | null;
+  kind: string;
+  title: string;
+  message: string;
+  link: string | null;
+  is_read: boolean;
+  created_at: string;
+}
+
+export interface NotificationFeed {
+  unread_count: number;
+  items: NotificationItem[];
+}
+
+export interface BusinessApplication extends Business {
+  approved_at: string | null;
+}
+
+export interface OrderAllocation {
+  id: number;
+  asset_id: number;
+  asset_tag: string;
+  product_name: string;
+  starts_at: string;
+  ends_at: string;
+  released_at: string | null;
+}
+
+export interface AdminOrderDetail extends RentalOrder {
+  customer_email: string;
+  customer_phone: string | null;
+  allocations: OrderAllocation[];
+}
+
+export interface AdminPaymentRecord extends PaymentEntry {
+  order_id: number;
+  order_status: RentalOrder['status'];
+  customer_id: number;
+  customer_name: string;
+}
+
+export interface CalendarEntry {
+  order_id: number;
+  customer_name: string;
+  starts_at: string;
+  ends_at: string;
+  status: RentalOrder['status'];
+  total_cents: number;
+  items: { name: string; quantity: number; kind: string }[];
+  allocated_assets: { asset_tag: string; product_name: string }[];
+}
+
+export interface PlatformUser {
+  id: number;
+  email: string;
+  display_name: string;
+  phone: string | null;
+  role: User['role'];
+  business_id: number | null;
+  business_name: string | null;
+  is_active: boolean;
+  order_count: number;
+  created_at: string;
+}
+
+export interface PlatformPaymentRecord {
+  id: number;
+  business_id: number;
+  business_name: string;
+  order_id: number;
+  customer_id: number;
+  customer_name: string;
+  kind: PaymentEntry['kind'];
+  status: PaymentEntry['status'];
+  amount_cents: number;
+  method: PaymentEntry['method'];
+  reference_number: string | null;
+  paid_at: string;
+  submitted_at: string;
+  decided_at: string | null;
+}
+
+export interface PlatformReportSummary {
+  orders: number;
+  orders_by_status: Record<string, number>;
+  total_order_value_cents: number;
+  verified_collections_cents: number;
+  businesses: {
+    business_id: number;
+    business_name: string;
+    status: Business['status'];
+    orders: number;
+    active_order_value_cents: number;
+    verified_collections_cents: number;
+  }[];
 }
 
 export interface OrderRequestReview {
   id: number;
   order_id: number;
   customer_id: number;
+  customer_name?: string;
   kind: OrderRequest['kind'];
   reason: string;
   proposed_data: OrderDraft | null;
@@ -256,9 +370,48 @@ export interface OrderRequestReview {
 
 export interface ReportSummary {
   orders: number;
+  orders_by_status?: Record<string, number>;
+  total_order_value_cents?: number;
   assets_in_available_condition: number;
   verified_collections_cents: number;
   collections_note: string;
+}
+
+export function extractApiError(error: unknown, fallback: string): string {
+  const httpError = error as { status?: number; error?: { detail?: unknown } };
+  if (httpError?.status === 0) {
+    return 'Cannot reach the server. Check your connection and try again.';
+  }
+  if (httpError?.status === 429) {
+    return 'Too many requests. Please wait a moment and try again.';
+  }
+  const detail = httpError?.error?.detail;
+  if (typeof detail === 'string' && detail.trim()) {
+    return detail;
+  }
+  if (Array.isArray(detail) && detail.length > 0) {
+    const messages = detail
+      .map((item) => {
+        if (!item || typeof item !== 'object') {
+          return '';
+        }
+        const entry = item as { loc?: unknown[]; msg?: unknown };
+        const message = typeof entry.msg === 'string' ? entry.msg.replace(/^Value error,\s*/i, '') : '';
+        const field =
+          Array.isArray(entry.loc) && entry.loc.length > 0
+            ? String(entry.loc[entry.loc.length - 1]).replaceAll('_', ' ')
+            : '';
+        if (!message) {
+          return '';
+        }
+        return field && field !== 'body' ? `${field}: ${message}` : message;
+      })
+      .filter(Boolean);
+    if (messages.length > 0) {
+      return messages.join(' · ');
+    }
+  }
+  return fallback;
 }
 
 export interface PricingFields {
@@ -272,32 +425,84 @@ export interface PricingFields {
 export class ApiService {
   private readonly baseUrl = environment.apiUrl;
   private readonly tokenKey = 'karaokewebapp.access-token';
+  private readonly userKey = 'karaokewebapp.user';
+  private readonly noticeKey = 'karaokewebapp.session-notice';
   private readonly userState = signal<User | null>(this.readSavedUser());
   readonly user = this.userState.asReadonly();
   readonly isPlatformAdmin = computed(() => this.userState()?.role === 'platform_admin');
+  readonly isBusinessAdmin = computed(() => this.userState()?.role === 'business_admin');
   readonly isAdmin = computed(() => ['business_admin', 'business_staff'].includes(this.userState()?.role || ''));
 
   private readonly http = inject(HttpClient);
 
+  hasValidSession(): boolean {
+    const token = sessionStorage.getItem(this.tokenKey);
+    if (!token || !this.userState() || this.isTokenExpired(token)) {
+      if (token || this.userState()) {
+        this.logout('Your session expired. Sign in again to continue.');
+      }
+      return false;
+    }
+    return true;
+  }
+
+  consumeSessionNotice(): string {
+    const notice = sessionStorage.getItem(this.noticeKey) || '';
+    if (notice) {
+      sessionStorage.removeItem(this.noticeKey);
+    }
+    return notice;
+  }
+
+  private isTokenExpired(token: string): boolean {
+    try {
+      const parts = token.split('.');
+      if (parts.length !== 3) {
+        return true;
+      }
+      const base64 = parts[1].replace(/-/g, '+').replace(/_/g, '/');
+      const padded = base64.padEnd(base64.length + ((4 - (base64.length % 4)) % 4), '=');
+      const payload = JSON.parse(atob(padded)) as { exp?: number };
+      return typeof payload.exp !== 'number' || payload.exp * 1000 <= Date.now();
+    } catch {
+      return true;
+    }
+  }
+
   private readSavedUser(): User | null {
     try {
-      const saved = sessionStorage.getItem('karaokewebapp.user');
-      return saved ? (JSON.parse(saved) as User) : null;
+      const token = sessionStorage.getItem(this.tokenKey);
+      const saved = sessionStorage.getItem(this.userKey);
+      if (!token || !saved || this.isTokenExpired(token)) {
+        sessionStorage.removeItem(this.userKey);
+        sessionStorage.removeItem(this.tokenKey);
+        return null;
+      }
+      return JSON.parse(saved) as User;
     } catch {
-      sessionStorage.removeItem('karaokewebapp.user');
+      sessionStorage.removeItem(this.userKey);
       sessionStorage.removeItem(this.tokenKey);
       return null;
     }
   }
 
-  private headers(): HttpHeaders {
+  private headers(extra: Record<string, string> = {}): HttpHeaders {
     const token = sessionStorage.getItem(this.tokenKey);
-    return token ? new HttpHeaders({ Authorization: `Bearer ${token}` }) : new HttpHeaders();
+    const values: Record<string, string> = { ...extra };
+    if (token) {
+      values['Authorization'] = `Bearer ${token}`;
+    }
+    return new HttpHeaders(values);
+  }
+
+  private imageHeaders(file: File): HttpHeaders {
+    return file.type ? this.headers({ 'Content-Type': file.type }) : this.headers();
   }
 
   private saveSession(response: { access_token: string; user: User }): void {
     sessionStorage.setItem(this.tokenKey, response.access_token);
-    sessionStorage.setItem('karaokewebapp.user', JSON.stringify(response.user));
+    sessionStorage.setItem(this.userKey, JSON.stringify(response.user));
+    sessionStorage.removeItem(this.noticeKey);
     this.userState.set(response.user);
   }
 
@@ -329,9 +534,12 @@ export class ApiService {
     );
   }
 
-  logout(): void {
+  logout(notice?: string): void {
     sessionStorage.removeItem(this.tokenKey);
-    sessionStorage.removeItem('karaokewebapp.user');
+    sessionStorage.removeItem(this.userKey);
+    if (notice) {
+      sessionStorage.setItem(this.noticeKey, notice);
+    }
     this.userState.set(null);
   }
 
@@ -454,7 +662,7 @@ export class ApiService {
     return this.http.put<{ id: number; proof_available: boolean }>(
       `${this.baseUrl}/orders/${orderId}/payments/${paymentId}/proof`,
       image,
-      { headers: this.headers() },
+      { headers: this.imageHeaders(image) },
     );
   }
 
@@ -477,6 +685,12 @@ export class ApiService {
     return request;
   }
 
+  deleteProduct(id: number): Observable<{ id: number; deleted: boolean }> {
+    return this.http.delete<{ id: number; deleted: boolean }>(`${this.baseUrl}/admin/products/${id}`, {
+      headers: this.headers(),
+    });
+  }
+
   setProductPrice(id: number, price_cents: number): Observable<Product> {
     return this.http.patch<Product>(
       `${this.baseUrl}/admin/products/${id}/price`,
@@ -495,7 +709,14 @@ export class ApiService {
 
   uploadProductImage(id: number, image: File): Observable<{ id: number; image_url: string }> {
     return this.http.put<{ id: number; image_url: string }>(`${this.baseUrl}/admin/products/${id}/image`, image, {
+      headers: this.imageHeaders(image),
+    });
+  }
+
+  adminProductImage(id: number): Observable<Blob> {
+    return this.http.get(`${this.baseUrl}/admin/products/${id}/image`, {
       headers: this.headers(),
+      responseType: 'blob',
     });
   }
 
@@ -539,7 +760,14 @@ export class ApiService {
 
   uploadPackageImage(id: number, image: File): Observable<{ id: number; image_url: string }> {
     return this.http.put<{ id: number; image_url: string }>(`${this.baseUrl}/admin/packages/${id}/image`, image, {
+      headers: this.imageHeaders(image),
+    });
+  }
+
+  adminPackageImage(id: number): Observable<Blob> {
+    return this.http.get(`${this.baseUrl}/admin/packages/${id}/image`, {
       headers: this.headers(),
+      responseType: 'blob',
     });
   }
 
@@ -599,8 +827,22 @@ export class ApiService {
     return this.http.patch(`${this.baseUrl}/admin/customers/${id}/active`, { is_active }, { headers: this.headers() });
   }
 
-  report(): Observable<ReportSummary> {
-    return this.http.get<ReportSummary>(`${this.baseUrl}/admin/reports/summary`, { headers: this.headers() });
+  report(starts_at?: string, ends_at?: string): Observable<ReportSummary> {
+    let params = new HttpParams();
+    if (starts_at && ends_at) {
+      params = params.set('starts_at', starts_at).set('ends_at', ends_at);
+    }
+    return this.http.get<ReportSummary>(`${this.baseUrl}/admin/reports/summary`, {
+      params,
+      headers: this.headers(),
+    });
+  }
+
+  adminAuditLogs(limit = 50): Observable<BusinessAuditLog[]> {
+    return this.http.get<BusinessAuditLog[]>(`${this.baseUrl}/admin/audit-logs`, {
+      params: new HttpParams().set('limit', limit),
+      headers: this.headers(),
+    });
   }
 
   businessSettings(): Observable<Business> {
@@ -626,7 +868,16 @@ export class ApiService {
   }
 
   uploadBusinessImage(kind: 'logo' | 'banner', image: File): Observable<Business> {
-    return this.http.put<Business>(`${this.baseUrl}/admin/business/${kind}`, image, { headers: this.headers() });
+    return this.http.put<Business>(`${this.baseUrl}/admin/business/${kind}`, image, {
+      headers: this.imageHeaders(image),
+    });
+  }
+
+  adminBusinessImage(kind: 'logo' | 'banner'): Observable<Blob> {
+    return this.http.get(`${this.baseUrl}/admin/business/${kind}`, {
+      headers: this.headers(),
+      responseType: 'blob',
+    });
   }
 
   adminCategories(): Observable<BusinessCategory[]> {
@@ -735,5 +986,239 @@ export class ApiService {
       { value },
       { headers: this.headers() },
     );
+  }
+
+  changePassword(
+    current_password: string,
+    new_password: string,
+  ): Observable<{ updated: boolean; access_token?: string; message: string }> {
+    return this.http
+      .put<{ updated: boolean; access_token?: string; message: string }>(
+        `${this.baseUrl}/users/me/password`,
+        { current_password, new_password },
+        { headers: this.headers() },
+      )
+      .pipe(
+        tap((response) => {
+          if (response.access_token) {
+            sessionStorage.setItem(this.tokenKey, response.access_token);
+          }
+        }),
+      );
+  }
+
+  myBusinessApplication(): Observable<BusinessApplication> {
+    return this.http.get<BusinessApplication>(`${this.baseUrl}/users/me/business-application`, {
+      headers: this.headers(),
+    });
+  }
+
+  forgotPassword(
+    email: string,
+  ): Observable<{ email_delivery_configured: boolean; support_email: string | null; message: string }> {
+    return this.http.post<{ email_delivery_configured: boolean; support_email: string | null; message: string }>(
+      `${this.baseUrl}/auth/forgot-password`,
+      { email },
+    );
+  }
+
+  resetPassword(token: string, new_password: string): Observable<{ reset: boolean; message: string }> {
+    return this.http.post<{ reset: boolean; message: string }>(`${this.baseUrl}/auth/reset-password`, {
+      token,
+      new_password,
+    });
+  }
+
+  notifications(unreadOnly = false, limit = 50): Observable<NotificationFeed> {
+    let params = new HttpParams().set('limit', limit);
+    if (unreadOnly) {
+      params = params.set('unread_only', 'true');
+    }
+    return this.http.get<NotificationFeed>(`${this.baseUrl}/notifications`, {
+      params,
+      headers: this.headers(),
+    });
+  }
+
+  markNotificationRead(id: number): Observable<{ id: number; is_read: boolean }> {
+    return this.http.patch<{ id: number; is_read: boolean }>(
+      `${this.baseUrl}/notifications/${id}/read`,
+      {},
+      { headers: this.headers() },
+    );
+  }
+
+  markAllNotificationsRead(): Observable<{ marked_read: number }> {
+    return this.http.post<{ marked_read: number }>(
+      `${this.baseUrl}/notifications/read-all`,
+      {},
+      { headers: this.headers() },
+    );
+  }
+
+  productDetail(id: number, starts_at?: string, ends_at?: string): Observable<ProductDetail> {
+    let params = new HttpParams();
+    if (starts_at && ends_at) {
+      params = params.set('starts_at', starts_at).set('ends_at', ends_at);
+    }
+    return this.http.get<ProductDetail>(`${this.baseUrl}/catalog/products/${id}`, { params });
+  }
+
+  packageDetail(id: number, starts_at?: string, ends_at?: string): Observable<PackageDetail> {
+    let params = new HttpParams();
+    if (starts_at && ends_at) {
+      params = params.set('starts_at', starts_at).set('ends_at', ends_at);
+    }
+    return this.http.get<PackageDetail>(`${this.baseUrl}/catalog/packages/${id}`, { params });
+  }
+
+  orderDetail(id: number): Observable<RentalOrder> {
+    return this.http.get<RentalOrder>(`${this.baseUrl}/orders/${id}`, { headers: this.headers() });
+  }
+
+  deletePackage(id: number): Observable<{ id: number; deleted: boolean }> {
+    return this.http.delete<{ id: number; deleted: boolean }>(`${this.baseUrl}/admin/packages/${id}`, {
+      headers: this.headers(),
+    });
+  }
+
+  deleteAsset(id: number): Observable<{ id: number; deleted: boolean }> {
+    return this.http.delete<{ id: number; deleted: boolean }>(`${this.baseUrl}/admin/inventory/${id}`, {
+      headers: this.headers(),
+    });
+  }
+
+  adminOrderDetail(id: number): Observable<AdminOrderDetail> {
+    return this.http.get<AdminOrderDetail>(`${this.baseUrl}/admin/orders/${id}`, { headers: this.headers() });
+  }
+
+  adminPayments(filters: { status?: string; method?: string; kind?: string } = {}): Observable<AdminPaymentRecord[]> {
+    let params = new HttpParams();
+    if (filters.status) {
+      params = params.set('status', filters.status);
+    }
+    if (filters.method) {
+      params = params.set('method', filters.method);
+    }
+    if (filters.kind) {
+      params = params.set('kind', filters.kind);
+    }
+    return this.http.get<AdminPaymentRecord[]>(`${this.baseUrl}/admin/payments`, {
+      params,
+      headers: this.headers(),
+    });
+  }
+
+  adminCalendar(starts_at?: string, ends_at?: string): Observable<CalendarEntry[]> {
+    let params = new HttpParams();
+    if (starts_at && ends_at) {
+      params = params.set('starts_at', starts_at).set('ends_at', ends_at);
+    }
+    return this.http.get<CalendarEntry[]>(`${this.baseUrl}/admin/calendar`, {
+      params,
+      headers: this.headers(),
+    });
+  }
+
+  platformUsers(filters: { role?: string; search?: string; is_active?: boolean } = {}): Observable<PlatformUser[]> {
+    let params = new HttpParams();
+    if (filters.role) {
+      params = params.set('role', filters.role);
+    }
+    if (filters.search?.trim()) {
+      params = params.set('search', filters.search.trim());
+    }
+    if (filters.is_active !== undefined) {
+      params = params.set('is_active', String(filters.is_active));
+    }
+    return this.http.get<PlatformUser[]>(`${this.baseUrl}/platform/users`, {
+      params,
+      headers: this.headers(),
+    });
+  }
+
+  platformSetUserActive(id: number, is_active: boolean): Observable<{ id: number; is_active: boolean }> {
+    return this.http.patch<{ id: number; is_active: boolean }>(
+      `${this.baseUrl}/platform/users/${id}/active`,
+      { is_active },
+      { headers: this.headers() },
+    );
+  }
+
+  platformProducts(
+    filters: { business_id?: number; search?: string; is_active?: boolean } = {},
+  ): Observable<Product[]> {
+    let params = new HttpParams();
+    if (filters.business_id !== undefined) {
+      params = params.set('business_id', filters.business_id);
+    }
+    if (filters.search?.trim()) {
+      params = params.set('search', filters.search.trim());
+    }
+    if (filters.is_active !== undefined) {
+      params = params.set('is_active', String(filters.is_active));
+    }
+    return this.http.get<Product[]>(`${this.baseUrl}/platform/products`, {
+      params,
+      headers: this.headers(),
+    });
+  }
+
+  platformSetProductActive(id: number, is_active: boolean): Observable<{ id: number; is_active: boolean }> {
+    return this.http.patch<{ id: number; is_active: boolean }>(
+      `${this.baseUrl}/platform/products/${id}/active`,
+      { is_active },
+      { headers: this.headers() },
+    );
+  }
+
+  platformOrders(filters: { business_id?: number; status?: string; limit?: number } = {}): Observable<RentalOrder[]> {
+    let params = new HttpParams();
+    if (filters.business_id !== undefined) {
+      params = params.set('business_id', filters.business_id);
+    }
+    if (filters.status) {
+      params = params.set('status', filters.status);
+    }
+    if (filters.limit !== undefined) {
+      params = params.set('limit', filters.limit);
+    }
+    return this.http.get<RentalOrder[]>(`${this.baseUrl}/platform/orders`, {
+      params,
+      headers: this.headers(),
+    });
+  }
+
+  platformPayments(
+    filters: { business_id?: number; status?: string; method?: string; limit?: number } = {},
+  ): Observable<PlatformPaymentRecord[]> {
+    let params = new HttpParams();
+    if (filters.business_id !== undefined) {
+      params = params.set('business_id', filters.business_id);
+    }
+    if (filters.status) {
+      params = params.set('status', filters.status);
+    }
+    if (filters.method) {
+      params = params.set('method', filters.method);
+    }
+    if (filters.limit !== undefined) {
+      params = params.set('limit', filters.limit);
+    }
+    return this.http.get<PlatformPaymentRecord[]>(`${this.baseUrl}/platform/payments`, {
+      params,
+      headers: this.headers(),
+    });
+  }
+
+  platformReports(starts_at?: string, ends_at?: string): Observable<PlatformReportSummary> {
+    let params = new HttpParams();
+    if (starts_at && ends_at) {
+      params = params.set('starts_at', starts_at).set('ends_at', ends_at);
+    }
+    return this.http.get<PlatformReportSummary>(`${this.baseUrl}/platform/reports/summary`, {
+      params,
+      headers: this.headers(),
+    });
   }
 }

@@ -28,10 +28,12 @@ describe('HomePage', () => {
             categories: () => of([]),
             products: () => of([]),
             packages: () => of([]),
+            notifications: () => of({ unread_count: 0, items: [] }),
           },
         },
       ],
     }).compileComponents();
+    sessionStorage.clear();
     fixture = TestBed.createComponent(HomePage);
     component = fixture.componentInstance;
     fixture.detectChanges();
@@ -69,5 +71,32 @@ describe('HomePage', () => {
     expect(component.cart).toHaveLength(1);
     expect(component.cart[0].business_id).toBe(10);
     expect(component.error).toContain('one business rental request at a time');
+  });
+
+  it('renders PHP currency totals with registered en-PH locale without throwing NG0701', () => {
+    component.addProduct({
+      id: 1,
+      business_id: 10,
+      business_name: 'EchoVibe',
+      business_slug: 'echovibe',
+      name: 'Standard Karaoke',
+      description: '',
+      category: 'karaoke',
+      quality_tier_id: 1,
+      quality_name: 'Standard',
+      price_cents: 100000,
+      pricing_basis: 'per_rental',
+      pricing_configured: true,
+      billing_interval_minutes: null,
+      rounding_rule: null,
+      image_url: null,
+      is_active: true,
+      stock_count: 2,
+      available_count: 2,
+    });
+    component.quoteTotal = 100000;
+    fixture.detectChanges();
+
+    expect(fixture.nativeElement.textContent).toContain('1,000.00');
   });
 });

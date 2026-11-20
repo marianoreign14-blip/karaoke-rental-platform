@@ -1,14 +1,22 @@
 from datetime import datetime, timezone
+import hashlib
 import re
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, status
-from sqlalchemy import func, select
+from pydantic import EmailStr, TypeAdapter, ValidationError
+from sqlalchemy import delete, func, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, selectinload
 from slowapi import Limiter
 from slowapi.util import get_remote_address
 
 from app.core.database import get_db
-from app.core.security import create_access_token, hash_password, verify_password
+from app.core.security import (
+    DUMMY_PASSWORD_HASH,
+    create_access_token,
+    hash_password,
+    password_fingerprint,
+    verify_password,
+)
 from app.dependencies import administrator, current_user, platform_administrator
 from app.models import (
     AssetCondition,
@@ -73,11 +81,42 @@ from app.services.inventory import (
     price_configured,
     release_allocations,
 )
+from app.services.notifications import notify_business_team, notify_platform_admins, notify_user
 
 api = APIRouter(prefix="/api")
 limiter = Limiter(key_func=get_remote_address)
 MAX_UPLOAD_IMAGE_BYTES = 5 * 1024 * 1024
 SUPPORTED_IMAGE_MEDIA_TYPES = {"image/jpeg", "image/png", "image/webp"}
+_EMAIL_ADAPTER = TypeAdapter(EmailStr)
+
+
+def _as_utc(value: datetime) -> datetime:
+    if value.tzinfo is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc)
+
+
+def _ilike_term(raw: str) -> str:
+    escaped = raw.strip().replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+    return f"%{escaped}%"
+
+
+def _image_response(
+    request: Request,
+    data: bytes,
+    media_type: str,
+    *,
+    cache_control: str = "public, no-cache",
+) -> Response:
+    etag = f'"{hashlib.sha256(data).hexdigest()[:16]}"'
+    headers = {
+        "Cache-Control": cache_control,
+        "ETag": etag,
+        "X-Content-Type-Options": "nosniff",
+    }
+    if request.headers.get("if-none-match") == etag:
+        return Response(status_code=status.HTTP_304_NOT_MODIFIED, headers=headers)
+    return Response(content=data, media_type=media_type, headers=headers)
 
 
 @api.get("/health")
@@ -168,6 +207,21 @@ def _require_business_admin(user: User) -> int:
 @api.post("/auth/business-register", status_code=status.HTTP_201_CREATED)
 @limiter.limit("3/hour")
 def register_business(payload: BusinessRegisterInput, request: Request, db: Session = Depends(get_db)):
+    normalized_name = payload.business_name.strip()
+    existing_business = db.scalar(
+        select(Business.id).where(func.lower(func.trim(Business.name)) == normalized_name.lower())
+    )
+    if existing_business is not None:
+        raise HTTPException(
+            status_code=409,
+            detail="A business with that name or an account with that email already exists",
+        )
+    default_plan_setting = db.get(PlatformSetting, "default_subscription_plan")
+    default_plan = (
+        default_plan_setting.value.strip()[:40]
+        if default_plan_setting and default_plan_setting.value.strip()
+        else "demo"
+    )
     business = Business(
         name=payload.business_name.strip(),
         slug=_business_slug(payload.business_name),
@@ -176,19 +230,20 @@ def register_business(payload: BusinessRegisterInput, request: Request, db: Sess
         contact_email=payload.email.lower(),
         contact_phone=payload.contact_number.strip(),
         address=payload.address.strip(),
+        subscription_plan=default_plan,
     )
     db.add(business)
-    db.flush()
-    owner = User(
-        email=payload.email.lower(),
-        password_hash=hash_password(payload.password),
-        display_name=payload.owner_name.strip(),
-        phone=payload.contact_number.strip(),
-        role=UserRole.BUSINESS_PENDING,
-        business_id=business.id,
-    )
-    db.add(owner)
     try:
+        db.flush()
+        owner = User(
+            email=payload.email.lower(),
+            password_hash=hash_password(payload.password),
+            display_name=payload.owner_name.strip(),
+            phone=payload.contact_number.strip(),
+            role=UserRole.BUSINESS_PENDING,
+            business_id=business.id,
+        )
+        db.add(owner)
         db.flush()
         db.add_all(
             [
@@ -201,6 +256,14 @@ def register_business(payload: BusinessRegisterInput, request: Request, db: Sess
             ]
         )
         _audit(db, owner, business.id, "business_registration_submitted", "business", business.id, {})
+        notify_platform_admins(
+            db,
+            kind="business_application",
+            title=f"New business application: {business.name}",
+            message=f"{owner.display_name} ({owner.email}) submitted a registration for {business.name}.",
+            link="/platform",
+            business_id=business.id,
+        )
         db.commit()
     except IntegrityError:
         db.rollback()
@@ -221,9 +284,11 @@ def marketplace_businesses(
         Business.status == BusinessStatus.ACTIVE.value,
         Business.is_listed.is_(True),
     )
-    if search:
-        term = f"%{search.strip()}%"
-        statement = statement.where(Business.name.ilike(term) | Business.description.ilike(term))
+    if search and search.strip():
+        term = _ilike_term(search)
+        statement = statement.where(
+            Business.name.ilike(term, escape="\\") | Business.description.ilike(term, escape="\\")
+        )
     businesses = db.scalars(statement.order_by(Business.name, Business.id))
     return [_business_read(business, request) for business in businesses]
 
@@ -243,7 +308,7 @@ def marketplace_business(slug: str, request: Request, db: Session = Depends(get_
 
 
 @api.get("/marketplace/businesses/{business_id}/logo", name="business_logo")
-def business_logo(business_id: int, db: Session = Depends(get_db)):
+def business_logo(business_id: int, request: Request, db: Session = Depends(get_db)):
     business = db.scalar(
         select(Business).where(
             Business.id == business_id,
@@ -253,15 +318,11 @@ def business_logo(business_id: int, db: Session = Depends(get_db)):
     )
     if business is None or business.logo_data is None or business.logo_media_type is None:
         raise HTTPException(status_code=404, detail="Business logo not found")
-    return Response(
-        content=business.logo_data,
-        media_type=business.logo_media_type,
-        headers={"Cache-Control": "public, max-age=300", "X-Content-Type-Options": "nosniff"},
-    )
+    return _image_response(request, business.logo_data, business.logo_media_type)
 
 
 @api.get("/marketplace/businesses/{business_id}/banner", name="business_banner")
-def business_banner(business_id: int, db: Session = Depends(get_db)):
+def business_banner(business_id: int, request: Request, db: Session = Depends(get_db)):
     business = db.scalar(
         select(Business).where(
             Business.id == business_id,
@@ -271,11 +332,7 @@ def business_banner(business_id: int, db: Session = Depends(get_db)):
     )
     if business is None or business.banner_data is None or business.banner_media_type is None:
         raise HTTPException(status_code=404, detail="Business banner not found")
-    return Response(
-        content=business.banner_data,
-        media_type=business.banner_media_type,
-        headers={"Cache-Control": "public, max-age=300", "X-Content-Type-Options": "nosniff"},
-    )
+    return _image_response(request, business.banner_data, business.banner_media_type)
 
 
 @api.get("/platform/summary")
@@ -325,8 +382,17 @@ def update_platform_setting(
     if key not in allowed_keys:
         raise HTTPException(status_code=404, detail="Platform setting not found")
     value = payload.value.strip()
-    if key == "maintenance_mode" and value.lower() not in {"true", "false"}:
-        raise HTTPException(status_code=422, detail="maintenance_mode must be true or false")
+    if key == "maintenance_mode":
+        if value.lower() not in {"true", "false"}:
+            raise HTTPException(status_code=422, detail="maintenance_mode must be true or false")
+        value = value.lower()
+    elif key in {"marketplace_name", "default_subscription_plan"} and not value:
+        raise HTTPException(status_code=422, detail=f"{key} cannot be empty")
+    elif key == "support_email" and value:
+        try:
+            value = str(_EMAIL_ADAPTER.validate_python(value)).lower()
+        except ValidationError:
+            raise HTTPException(status_code=422, detail="support_email must be a valid email address") from None
     setting = db.get(PlatformSetting, key)
     if setting is None:
         setting = PlatformSetting(key=key, value=value, updated_by_id=platform_admin.id)
@@ -350,9 +416,11 @@ def platform_businesses(
     statement = select(Business)
     if status_filter:
         statement = statement.where(Business.status == status_filter)
-    if search:
-        term = f"%{search.strip()}%"
-        statement = statement.where(Business.name.ilike(term) | Business.slug.ilike(term))
+    if search and search.strip():
+        term = _ilike_term(search)
+        statement = statement.where(
+            Business.name.ilike(term, escape="\\") | Business.slug.ilike(term, escape="\\")
+        )
     result = []
     for business in db.scalars(statement.order_by(Business.created_at.desc(), Business.id)):
         owner = db.scalar(
@@ -447,6 +515,25 @@ def set_business_status(
         business.id,
         {"status": payload.status, "note": payload.note},
     )
+    affected_owners = db.scalars(
+        select(User.id).where(
+            User.business_id == business.id,
+            User.role.in_([UserRole.BUSINESS_ADMIN, UserRole.BUSINESS_PENDING]),
+        )
+    ).all()
+    for owner_id in affected_owners:
+        notify_user(
+            db,
+            user_id=owner_id,
+            business_id=business.id,
+            kind="business_status_changed",
+            title=f"Business status updated: {payload.status.title()}",
+            message=(
+                f"{business.name} is now {payload.status}."
+                + (f" Note: {payload.note}" if payload.note else "")
+            ),
+            link="/admin" if payload.status == BusinessStatus.ACTIVE.value else "/account",
+        )
     db.commit()
     db.refresh(business)
     return _business_read(business, request)
@@ -532,14 +619,18 @@ def create_business_admin(
 @api.get("/platform/audit-logs")
 def platform_audit_logs(
     limit: int = Query(default=100, ge=1, le=500),
+    business_id: int | None = None,
     _: User = Depends(platform_administrator),
     db: Session = Depends(get_db),
 ):
-    rows = db.execute(
+    statement = (
         select(BusinessAuditLog, Business.name)
         .outerjoin(Business, Business.id == BusinessAuditLog.business_id)
-        .order_by(BusinessAuditLog.created_at.desc(), BusinessAuditLog.id.desc())
-        .limit(limit)
+    )
+    if business_id is not None:
+        statement = statement.where(BusinessAuditLog.business_id == business_id)
+    rows = db.execute(
+        statement.order_by(BusinessAuditLog.created_at.desc(), BusinessAuditLog.id.desc()).limit(limit)
     )
     return [
         {
@@ -577,6 +668,14 @@ def update_business_settings(
     business = db.get(Business, business_id)
     if business is None:
         raise HTTPException(status_code=404, detail="Business not found")
+    duplicate_name = db.scalar(
+        select(Business.id).where(
+            Business.id != business.id,
+            func.lower(func.trim(Business.name)) == payload.name.strip().lower(),
+        )
+    )
+    if duplicate_name is not None:
+        raise HTTPException(status_code=409, detail="A business with that name already exists")
     before = {
         "name": business.name,
         "description": business.description,
@@ -585,7 +684,14 @@ def update_business_settings(
         "brand_accent": business.brand_accent,
     }
     for field, value in payload.model_dump().items():
+        if field == "contact_email" and isinstance(value, str):
+            value = value.lower()
         setattr(business, field, value)
+    try:
+        db.flush()
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(status_code=409, detail="A business with that name already exists") from None
     _audit(
         db,
         admin,
@@ -625,6 +731,22 @@ async def _save_business_image(
     return _business_read(business, request)
 
 
+@api.get("/admin/business/logo")
+def admin_business_logo(request: Request, admin: User = Depends(administrator), db: Session = Depends(get_db)):
+    business = db.get(Business, _require_business_id(admin))
+    if business is None or business.logo_data is None or business.logo_media_type is None:
+        raise HTTPException(status_code=404, detail="Business logo not found")
+    return _image_response(request, business.logo_data, business.logo_media_type, cache_control="private, no-cache")
+
+
+@api.get("/admin/business/banner")
+def admin_business_banner(request: Request, admin: User = Depends(administrator), db: Session = Depends(get_db)):
+    business = db.get(Business, _require_business_id(admin))
+    if business is None or business.banner_data is None or business.banner_media_type is None:
+        raise HTTPException(status_code=404, detail="Business banner not found")
+    return _image_response(request, business.banner_data, business.banner_media_type, cache_control="private, no-cache")
+
+
 @api.put("/admin/business/logo")
 async def upload_business_logo(
     request: Request,
@@ -645,7 +767,7 @@ async def upload_business_banner(
 
 @api.get("/admin/staff")
 def business_staff(admin: User = Depends(administrator), db: Session = Depends(get_db)):
-    business_id = _require_business_id(admin)
+    business_id = _require_business_admin(admin)
     staff = db.scalars(
         select(User)
         .where(
@@ -707,13 +829,14 @@ def set_business_staff_active(
 @api.get("/admin/categories")
 def admin_categories(admin: User = Depends(administrator), db: Session = Depends(get_db)):
     business_id = _require_business_id(admin)
-    return list(
-        db.scalars(
+    return [
+        {"id": category.id, "name": category.name, "is_active": category.is_active}
+        for category in db.scalars(
             select(BusinessCategory)
             .where(BusinessCategory.business_id == business_id)
             .order_by(BusinessCategory.name)
         )
-    )
+    ]
 
 
 @api.post("/admin/categories", status_code=status.HTTP_201_CREATED)
@@ -747,7 +870,7 @@ def update_business_category(
     admin: User = Depends(administrator),
     db: Session = Depends(get_db),
 ):
-    business_id = _require_business_id(admin)
+    business_id = _require_business_admin(admin)
     category = db.scalar(
         select(BusinessCategory).where(
             BusinessCategory.id == category_id,
@@ -756,16 +879,38 @@ def update_business_category(
     )
     if category is None:
         raise HTTPException(status_code=404, detail="Category not found")
-    category.name = payload.name.strip()
+    previous_name = category.name
+    new_name = payload.name.strip()
+    category.name = new_name
     category.is_active = payload.is_active
     try:
         db.flush()
+        if previous_name != new_name:
+            db.execute(
+                update(Product)
+                .where(
+                    Product.business_id == business_id,
+                    func.lower(func.trim(Product.category)) == previous_name.strip().lower(),
+                )
+                .values(category=new_name)
+            )
+            db.flush()
     except IntegrityError:
         db.rollback()
         raise HTTPException(status_code=409, detail="That category already exists for this business") from None
-    _audit(db, admin, business_id, "category_updated", "category", category.id, {"name": category.name})
+    _audit(
+        db,
+        admin,
+        business_id,
+        "category_updated",
+        "category",
+        category.id,
+        {"before_name": previous_name, "name": category.name},
+    )
     db.commit()
     return {"id": category.id, "name": category.name, "is_active": category.is_active}
+
+
 @api.post("/auth/register", status_code=status.HTTP_201_CREATED)
 @limiter.limit("5/minute")
 def register(payload: RegisterInput, request: Request, db: Session = Depends(get_db)):
@@ -783,20 +928,35 @@ def register(payload: RegisterInput, request: Request, db: Session = Depends(get
         db.rollback()
         raise HTTPException(status_code=409, detail="An account with that email already exists") from None
     db.refresh(user)
-    return {"access_token": create_access_token(str(user.id)), "token_type": "bearer", "user": _user_read(user)}
+    return {
+        "access_token": create_access_token(str(user.id), password_version=password_fingerprint(user.password_hash)),
+        "token_type": "bearer",
+        "user": _user_read(user),
+    }
 
 
 @api.post("/auth/login")
 @limiter.limit("10/minute")
 def login(payload: LoginInput, request: Request, db: Session = Depends(get_db)):
     user = db.scalar(select(User).where(User.email == payload.email.lower()))
-    if user is None or not user.is_active or not verify_password(payload.password, user.password_hash):
+    if user is None:
+        verify_password(payload.password, DUMMY_PASSWORD_HASH)
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Email or password is incorrect",
             headers={"WWW-Authenticate": "Bearer"},
         )
-    return {"access_token": create_access_token(str(user.id)), "token_type": "bearer", "user": _user_read(user)}
+    if not user.is_active or not verify_password(payload.password, user.password_hash):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Email or password is incorrect",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    return {
+        "access_token": create_access_token(str(user.id), password_version=password_fingerprint(user.password_hash)),
+        "token_type": "bearer",
+        "user": _user_read(user),
+    }
 
 
 @api.get("/users/me")
@@ -851,14 +1011,16 @@ def _available_assets(
     starts_at: datetime,
     ends_at: datetime,
 ) -> list[InventoryAsset]:
+    start_utc = _as_utc(starts_at)
+    end_utc = _as_utc(ends_at)
     conflicting_allocation = select(InventoryAllocation.id).join(
         RentalOrder, RentalOrder.id == InventoryAllocation.order_id
     ).where(
         InventoryAllocation.asset_id == InventoryAsset.id,
         InventoryAllocation.released_at.is_(None),
         RentalOrder.status.in_(ACTIVE_ALLOCATION_STATUSES),
-        InventoryAllocation.starts_at < ends_at,
-        InventoryAllocation.ends_at > starts_at,
+        InventoryAllocation.starts_at < end_utc,
+        InventoryAllocation.ends_at > start_utc,
     )
     return list(
         db.scalars(
@@ -869,6 +1031,22 @@ def _available_assets(
             )
         ).all()
     )
+
+
+def _stock_counts_by_product(db: Session, product_ids: list[int], business_id: int | None = None) -> dict[int, int]:
+    if not product_ids:
+        return {}
+    statement = (
+        select(InventoryAsset.product_id, func.count(InventoryAsset.id))
+        .where(
+            InventoryAsset.product_id.in_(product_ids),
+            InventoryAsset.condition == AssetCondition.AVAILABLE,
+        )
+        .group_by(InventoryAsset.product_id)
+    )
+    if business_id is not None:
+        statement = statement.where(InventoryAsset.business_id == business_id)
+    return {product_id: count for product_id, count in db.execute(statement)}
 
 
 @api.get("/catalog/products")
@@ -885,17 +1063,18 @@ def catalog_products(
 ):
     if (starts_at is None) != (ends_at is None):
         raise HTTPException(status_code=422, detail="Both starts_at and ends_at are required for availability")
-    if starts_at is not None and (
-        starts_at.tzinfo is None
-        or ends_at is None
-        or ends_at.tzinfo is None
-        or ends_at <= starts_at
-    ):
-        raise HTTPException(status_code=422, detail="Provide a valid timezone-aware rental window")
+    if starts_at is not None:
+        if starts_at.tzinfo is None or ends_at is None or ends_at.tzinfo is None:
+            raise HTTPException(status_code=422, detail="Provide a valid timezone-aware rental window")
+        starts_at = _as_utc(starts_at)
+        ends_at = _as_utc(ends_at)
+        if ends_at <= starts_at:
+            raise HTTPException(status_code=422, detail="Provide a valid timezone-aware rental window")
 
     statement = (
         select(Product)
         .join(Business, Business.id == Product.business_id)
+        .join(QualityTier, QualityTier.id == Product.quality_tier_id)
         .options(selectinload(Product.quality_tier), selectinload(Product.business))
         .where(
             Product.is_active.is_(True),
@@ -905,12 +1084,15 @@ def catalog_products(
     )
     if business_id is not None:
         statement = statement.where(Product.business_id == business_id)
-    if category is not None:
-        statement = statement.where(Product.category == category)
+    if category is not None and category.strip():
+        statement = statement.where(func.lower(func.trim(Product.category)) == category.strip().lower())
     if quality_tier_id is not None:
         statement = statement.where(Product.quality_tier_id == quality_tier_id)
-    if search:
-        statement = statement.where(Product.name.ilike(f"%{search.strip()}%"))
+    if search and search.strip():
+        term = _ilike_term(search)
+        statement = statement.where(
+            Product.name.ilike(term, escape="\\") | Product.description.ilike(term, escape="\\")
+        )
     if sort == "name":
         statement = statement.order_by(Product.name, Product.id)
     elif sort == "price_asc":
@@ -918,16 +1100,13 @@ def catalog_products(
     elif sort == "price_desc":
         statement = statement.order_by(Product.price_cents.desc(), Product.id)
     else:
-        statement = statement.order_by(Product.quality_tier_id, Product.name)
+        statement = statement.order_by(QualityTier.name, Product.name, Product.id)
 
+    products = list(db.scalars(statement))
+    stock_counts = _stock_counts_by_product(db, [product.id for product in products])
     result = []
-    for product in db.scalars(statement):
-        stock = db.scalar(
-            select(func.count(InventoryAsset.id)).where(
-                InventoryAsset.product_id == product.id,
-                InventoryAsset.condition == AssetCondition.AVAILABLE,
-            )
-        ) or 0
+    for product in products:
+        stock = stock_counts.get(product.id, 0)
         available = None
         if starts_at is not None and ends_at is not None:
             available = len(_available_assets(db, product.id, starts_at, ends_at))
@@ -936,7 +1115,7 @@ def catalog_products(
 
 
 @api.get("/catalog/products/{product_id}/image", name="catalog_product_image")
-def catalog_product_image(product_id: int, db: Session = Depends(get_db)):
+def catalog_product_image(product_id: int, request: Request, db: Session = Depends(get_db)):
     product = db.scalar(
         select(Product)
         .join(Business, Business.id == Product.business_id)
@@ -949,11 +1128,7 @@ def catalog_product_image(product_id: int, db: Session = Depends(get_db)):
     )
     if product is None or product.image_data is None or product.image_media_type is None:
         raise HTTPException(status_code=404, detail="Product image not found")
-    return Response(
-        content=product.image_data,
-        media_type=product.image_media_type,
-        headers={"Cache-Control": "public, max-age=300", "X-Content-Type-Options": "nosniff"},
-    )
+    return _image_response(request, product.image_data, product.image_media_type)
 
 
 @api.get("/catalog/quality-tiers")
@@ -981,7 +1156,6 @@ def catalog_categories(business_id: int, db: Session = Depends(get_db)):
         select(Business.id).where(
             Business.id == business_id,
             Business.status == BusinessStatus.ACTIVE.value,
-            Business.is_listed.is_(True),
             Business.is_listed.is_(True),
         )
     )
@@ -1063,7 +1237,7 @@ async def _read_uploaded_image(request: Request) -> tuple[bytes, str]:
 
 
 @api.get("/catalog/packages/{package_id}/image", name="catalog_package_image")
-def catalog_package_image(package_id: int, db: Session = Depends(get_db)):
+def catalog_package_image(package_id: int, request: Request, db: Session = Depends(get_db)):
     package = db.scalar(
         select(RentalPackage)
         .join(Business, Business.id == RentalPackage.business_id)
@@ -1071,15 +1245,12 @@ def catalog_package_image(package_id: int, db: Session = Depends(get_db)):
             RentalPackage.id == package_id,
             RentalPackage.is_active.is_(True),
             Business.status == BusinessStatus.ACTIVE.value,
+            Business.is_listed.is_(True),
         )
     )
     if package is None or package.image_data is None or package.image_media_type is None:
         raise HTTPException(status_code=404, detail="Package image not found")
-    return Response(
-        content=package.image_data,
-        media_type=package.image_media_type,
-        headers={"Cache-Control": "public, max-age=300", "X-Content-Type-Options": "nosniff"},
-    )
+    return _image_response(request, package.image_data, package.image_media_type)
 
 
 @api.get("/catalog/packages")
@@ -1092,10 +1263,13 @@ def catalog_packages(
 ):
     if (starts_at is None) != (ends_at is None):
         raise HTTPException(status_code=422, detail="Both starts_at and ends_at are required for availability")
-    if starts_at is not None and (
-        starts_at.tzinfo is None or ends_at is None or ends_at.tzinfo is None or ends_at <= starts_at
-    ):
-        raise HTTPException(status_code=422, detail="Provide a valid timezone-aware rental window")
+    if starts_at is not None:
+        if starts_at.tzinfo is None or ends_at is None or ends_at.tzinfo is None:
+            raise HTTPException(status_code=422, detail="Provide a valid timezone-aware rental window")
+        starts_at = _as_utc(starts_at)
+        ends_at = _as_utc(ends_at)
+        if ends_at <= starts_at:
+            raise HTTPException(status_code=422, detail="Provide a valid timezone-aware rental window")
     package_statement = (
         select(RentalPackage)
         .options(
@@ -1116,8 +1290,15 @@ def catalog_packages(
     packages = db.scalars(package_statement.order_by(RentalPackage.name))
     result = []
     for package in packages:
+        if not package.components or any(
+            component.business_id != package.business_id
+            or component.product.business_id != package.business_id
+            or not component.product.is_active
+            for component in package.components
+        ):
+            continue
         available = None
-        if starts_at is not None and ends_at is not None and package.components:
+        if starts_at is not None and ends_at is not None:
             available = min(
                 len(_available_assets(db, component.product_id, starts_at, ends_at)) // component.quantity
                 for component in package.components
@@ -1221,6 +1402,7 @@ def _order_read(order: RentalOrder) -> dict:
 def _load_order(db: Session, order_id: int) -> RentalOrder:
     order = db.scalar(
         select(RentalOrder)
+        .execution_options(populate_existing=True)
         .options(
             selectinload(RentalOrder.customer),
             selectinload(RentalOrder.lines),
@@ -1308,6 +1490,14 @@ def create_order(payload: OrderCreate, user: User = Depends(current_user), db: S
     lines = _persist_lines(db, order, lines_data)
     allocate_assets(db, order, lines, required)
     _add_history(db, order, user, "submitted", {"status": RentalStatus.PENDING_ADMIN.value, "lines": lines_data})
+    notify_business_team(
+        db,
+        business_id=payload.business_id,
+        kind="order_submitted",
+        title=f"New rental request #{order.id}",
+        message=f"{user.display_name} submitted rental request #{order.id}.",
+        link="/admin",
+    )
     db.commit()
     return _order_read(_load_order(db, order.id))
 
@@ -1359,17 +1549,19 @@ def get_order(order_id: int, user: User = Depends(current_user), db: Session = D
 @api.get("/orders/{order_id}/receipt")
 def get_order_receipt(order_id: int, user: User = Depends(current_user), db: Session = Depends(get_db)):
     order = _order_for_user(db, order_id, user)
-    paid, balance, payment_status = _payment_summary(order)
+    rendered = _order_read(order)
     return {
         "order_id": order.id,
+        "business_id": order.business_id,
+        "business_name": order.business.name,
         "customer": order.customer.display_name,
         "rental_period": {"starts_at": order.starts_at, "ends_at": order.ends_at},
-        "items": _order_read(order)["lines"],
+        "items": rendered["lines"],
         "total_cents": order.total_cents,
-        "verified_paid_cents": paid,
-        "balance_cents": balance,
-        "payment_status": payment_status,
-        "payment_history": _order_read(order)["payments"],
+        "verified_paid_cents": rendered["paid_cents"],
+        "balance_cents": rendered["balance_cents"],
+        "payment_status": rendered["payment_status"],
+        "payment_history": rendered["payments"],
     }
 
 
@@ -1380,7 +1572,21 @@ def create_order_request(
     user: User = Depends(current_user),
     db: Session = Depends(get_db),
 ):
-    order = _order_for_user(db, order_id, user)
+    if user.role != UserRole.CUSTOMER:
+        raise HTTPException(status_code=404, detail="Order not found")
+    locked = db.scalar(
+        select(RentalOrder)
+        .where(RentalOrder.id == order_id, RentalOrder.customer_id == user.id)
+        .with_for_update()
+    )
+    if locked is None:
+        raise HTTPException(status_code=404, detail="Order not found")
+    order = _load_order(db, locked.id)
+    if order.business.status != BusinessStatus.ACTIVE.value:
+        raise HTTPException(
+            status_code=409,
+            detail="This business is currently inactive and cannot accept new order requests",
+        )
     if order.status not in {RentalStatus.PENDING_ADMIN, RentalStatus.CONFIRMED}:
         raise HTTPException(status_code=409, detail="This order is not eligible for a change or cancellation request")
     pending = db.scalar(
@@ -1395,6 +1601,7 @@ def create_order_request(
     if payload.kind == RequestKind.MODIFICATION:
         if payload.starts_at is None or payload.ends_at is None or payload.lines is None:
             raise HTTPException(status_code=422, detail="A modification requires dates and replacement items")
+        build_order_lines(db, payload.lines, payload.starts_at, payload.ends_at, order.business_id)
         proposed_data = {
             "business_id": order.business_id,
             "starts_at": payload.starts_at.isoformat(),
@@ -1421,6 +1628,14 @@ def create_order_request(
     db.add(request_record)
     db.flush()
     _add_history(db, order, user, f"{payload.kind.value}_requested", {"request_id": request_record.id, "reason": payload.reason})
+    notify_business_team(
+        db,
+        business_id=order.business_id,
+        kind="order_request_submitted",
+        title=f"Order #{order.id} {payload.kind.value} request",
+        message=f"{user.display_name} requested a {payload.kind.value} on order #{order.id}: {payload.reason}",
+        link="/admin",
+    )
     db.commit()
     return {"id": request_record.id, "kind": request_record.kind.value, "status": request_record.status.value}
 
@@ -1435,6 +1650,11 @@ def submit_payment(
     db: Session = Depends(get_db),
 ):
     order = _order_for_user(db, order_id, user)
+    if order.business.status != BusinessStatus.ACTIVE.value:
+        raise HTTPException(
+            status_code=409,
+            detail="This business is currently inactive and cannot accept new payments",
+        )
     if payload.kind != PaymentEntryKind.PAYMENT:
         raise HTTPException(status_code=422, detail="Customers may submit payment details, not refunds")
     if order.status not in {RentalStatus.PENDING_ADMIN, RentalStatus.CONFIRMED}:
@@ -1459,6 +1679,14 @@ def submit_payment(
         user,
         "payment_submitted",
         {"payment_id": entry.id, "amount_cents": entry.amount_cents},
+    )
+    notify_business_team(
+        db,
+        business_id=order.business_id,
+        kind="payment_submitted",
+        title=f"Payment submitted for order #{order.id}",
+        message=f"{user.display_name} submitted payment details awaiting verification.",
+        link="/admin",
     )
     db.commit()
     return {"id": entry.id, "status": entry.status.value, "message": "Payment details await administrator verification"}
@@ -1502,10 +1730,14 @@ def payment_proof(
     if user.role == UserRole.CUSTOMER:
         order = _order_for_user(db, order_id, user)
     elif user.role in {UserRole.BUSINESS_ADMIN, UserRole.BUSINESS_STAFF}:
+        business_id = _require_business_id(user)
+        business = db.get(Business, business_id)
+        if business is None or business.status != BusinessStatus.ACTIVE.value:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="This business is not active")
         order = db.scalar(
             select(RentalOrder).where(
                 RentalOrder.id == order_id,
-                RentalOrder.business_id == _require_business_id(user),
+                RentalOrder.business_id == business_id,
             )
         )
         if order is None:
@@ -1530,25 +1762,18 @@ def payment_proof(
 
 @api.get("/admin/products")
 def admin_products(request: Request, admin: User = Depends(administrator), db: Session = Depends(get_db)):
-    products = db.scalars(
-        select(Product)
-        .options(selectinload(Product.quality_tier), selectinload(Product.business))
-        .where(Product.business_id == admin.business_id)
-        .order_by(Product.id)
-    )
-    return [
-        _product_read(
-            product,
-            request,
-            db.scalar(
-                select(func.count(InventoryAsset.id)).where(
-                    InventoryAsset.product_id == product.id,
-                    InventoryAsset.condition == AssetCondition.AVAILABLE,
-                )
-            )
-            or 0,
-            None,
+    business_id = _require_business_id(admin)
+    products = list(
+        db.scalars(
+            select(Product)
+            .options(selectinload(Product.quality_tier), selectinload(Product.business))
+            .where(Product.business_id == business_id)
+            .order_by(Product.id)
         )
+    )
+    stock_counts = _stock_counts_by_product(db, [product.id for product in products], business_id=business_id)
+    return [
+        _product_read(product, request, stock_counts.get(product.id, 0), None)
         for product in products
     ]
 
@@ -1564,37 +1789,52 @@ def _check_quality(db: Session, quality_tier_id: int, business_id: int):
         raise HTTPException(status_code=422, detail="The selected quality tier is not active for this business")
 
 
-def _check_category(db: Session, category_name: str, business_id: int):
-    if db.scalar(
-        select(BusinessCategory.id).where(
+def _check_category(db: Session, category_name: str, business_id: int) -> str:
+    canonical = db.scalar(
+        select(BusinessCategory.name).where(
             BusinessCategory.business_id == business_id,
             func.lower(func.trim(BusinessCategory.name)) == category_name.strip().lower(),
             BusinessCategory.is_active.is_(True),
         )
-    ) is None:
+    )
+    if canonical is None:
         raise HTTPException(status_code=422, detail="The selected category is not active for this business")
+    return canonical
 
 
-def _product_from_input(payload: ProductCreate | ProductUpdate) -> dict:
+def _product_from_input(
+    payload: ProductCreate | ProductUpdate,
+    canonical_category: str,
+    *,
+    existing_product: Product | None = None,
+    request: Request | None = None,
+) -> dict:
     data = payload.model_dump(exclude={"image_url", "initial_stock"})
     name = payload.name.strip()
     if not name:
         raise HTTPException(status_code=422, detail="Product name is required")
     data["name"] = name
+    data["category"] = canonical_category
     if "image_url" in payload.model_fields_set:
-        data["image_url"] = str(payload.image_url) if payload.image_url else None
+        incoming_url = str(payload.image_url) if payload.image_url else None
+        if existing_product is not None and existing_product.image_data is not None and request is not None:
+            self_url = str(request.url_for("catalog_product_image", product_id=existing_product.id))
+            if incoming_url is None or incoming_url == self_url:
+                return data
+        data["image_url"] = incoming_url
     return data
 
 
 def _check_product_name(
     db: Session,
     payload: ProductCreate | ProductUpdate,
+    canonical_category: str,
     business_id: int,
     exclude_product_id: int | None = None,
 ):
     statement = select(Product.id).where(
         Product.business_id == business_id,
-        Product.category == payload.category,
+        Product.category == canonical_category,
         Product.quality_tier_id == payload.quality_tier_id,
         func.lower(func.trim(Product.name)) == payload.name.strip().lower(),
     )
@@ -1653,9 +1893,9 @@ def create_product(
 ):
     business_id = _require_business_admin(admin)
     _check_quality(db, payload.quality_tier_id, business_id)
-    _check_category(db, payload.category, business_id)
-    _check_product_name(db, payload, business_id)
-    product = Product(business_id=business_id, **_product_from_input(payload))
+    canonical_category = _check_category(db, payload.category, business_id)
+    _check_product_name(db, payload, canonical_category, business_id)
+    product = Product(business_id=business_id, **_product_from_input(payload, canonical_category))
     db.add(product)
     try:
         db.flush()
@@ -1686,10 +1926,15 @@ def update_product(
     if product is None:
         raise HTTPException(status_code=404, detail="Product not found")
     _check_quality(db, payload.quality_tier_id, business_id)
-    _check_category(db, payload.category, business_id)
-    _check_product_name(db, payload, business_id, product.id)
+    canonical_category = _check_category(db, payload.category, business_id)
+    _check_product_name(db, payload, canonical_category, business_id, product.id)
     before_name = product.name
-    for key, value in _product_from_input(payload).items():
+    for key, value in _product_from_input(
+        payload,
+        canonical_category,
+        existing_product=product,
+        request=request,
+    ).items():
         setattr(product, key, value)
     try:
         db.flush()
@@ -1709,6 +1954,49 @@ def update_product(
     db.refresh(product)
     product.quality_tier
     return _product_read(product, request, _product_stock_count(db, product.id, business_id), None)
+
+
+@api.delete("/admin/products/{product_id}", status_code=status.HTTP_200_OK)
+def delete_product(
+    product_id: int,
+    admin: User = Depends(administrator),
+    db: Session = Depends(get_db),
+):
+    business_id = _require_business_admin(admin)
+    lock_products(db, {product_id}, business_id)
+    product = db.scalar(
+        select(Product).where(Product.id == product_id, Product.business_id == business_id)
+    )
+    if product is None:
+        raise HTTPException(status_code=404, detail="Product not found")
+    in_orders = db.scalar(
+        select(OrderLine.id).where(OrderLine.product_id == product.id).limit(1)
+    )
+    in_packages = db.scalar(
+        select(PackageComponent.id).where(PackageComponent.product_id == product.id).limit(1)
+    )
+    in_allocations = db.scalar(
+        select(InventoryAllocation.id)
+        .join(InventoryAsset, InventoryAsset.id == InventoryAllocation.asset_id)
+        .where(InventoryAsset.product_id == product.id)
+        .limit(1)
+    )
+    if in_orders is not None or in_packages is not None or in_allocations is not None:
+        raise HTTPException(
+            status_code=409,
+            detail="This product is referenced by rental orders, reservations, or packages. Deactivate it instead.",
+        )
+    product_name = product.name
+    db.execute(
+        delete(InventoryAsset).where(
+            InventoryAsset.product_id == product.id,
+            InventoryAsset.business_id == business_id,
+        )
+    )
+    db.delete(product)
+    _audit(db, admin, business_id, "product_deleted", "product", product_id, {"name": product_name})
+    db.commit()
+    return {"id": product_id, "deleted": True}
 
 
 @api.patch("/admin/products/{product_id}/price")
@@ -1790,6 +2078,22 @@ def update_product_stock(
     return _product_read(product, request, _product_stock_count(db, product_id, business_id), None)
 
 
+@api.get("/admin/products/{product_id}/image")
+def admin_product_image(
+    product_id: int,
+    request: Request,
+    admin: User = Depends(administrator),
+    db: Session = Depends(get_db),
+):
+    business_id = _require_business_id(admin)
+    product = db.scalar(
+        select(Product).where(Product.id == product_id, Product.business_id == business_id)
+    )
+    if product is None or product.image_data is None or product.image_media_type is None:
+        raise HTTPException(status_code=404, detail="Product image not found")
+    return _image_response(request, product.image_data, product.image_media_type, cache_control="private, no-cache")
+
+
 @api.put("/admin/products/{product_id}/image")
 async def upload_product_image(
     product_id: int,
@@ -1819,13 +2123,14 @@ async def upload_product_image(
 @api.get("/admin/quality-tiers")
 def admin_quality_tiers(admin: User = Depends(administrator), db: Session = Depends(get_db)):
     business_id = _require_business_id(admin)
-    return list(
-        db.scalars(
+    return [
+        {"id": tier.id, "name": tier.name, "is_active": tier.is_active}
+        for tier in db.scalars(
             select(QualityTier)
             .where(QualityTier.business_id == business_id)
             .order_by(QualityTier.name)
         )
-    )
+    ]
 
 
 @api.get("/admin/packages")
@@ -1921,9 +2226,11 @@ def admin_inventory(admin: User = Depends(administrator), db: Session = Depends(
     )
     rental_states: dict[int, str] = {}
     for asset_id, starts_at, ends_at, order_status in active_allocations:
+        start_utc = _as_utc(starts_at)
+        end_utc = _as_utc(ends_at)
         derived = (
             "currently rented"
-            if order_status == RentalStatus.CONFIRMED and starts_at <= now < ends_at
+            if order_status == RentalStatus.CONFIRMED and start_utc <= now < end_utc
             else "reserved"
         )
         if rental_states.get(asset_id) != "currently rented":
@@ -2040,6 +2347,7 @@ def _replace_package_components(
     if len(products) != len(product_ids):
         raise HTTPException(status_code=422, detail="Every package component must reference an active product")
     package.components.clear()
+    db.flush()
     package.components.extend(
         [
             PackageComponent(
@@ -2068,6 +2376,7 @@ def create_package(
     db.commit()
     saved_package = db.scalar(
         select(RentalPackage)
+        .execution_options(populate_existing=True)
         .options(
             selectinload(RentalPackage.components)
             .selectinload(PackageComponent.product)
@@ -2099,11 +2408,13 @@ def update_package(
         raise HTTPException(status_code=404, detail="Package not found")
     for key, value in _package_from_input(payload).items():
         setattr(package, key, value)
+    db.flush()
     _replace_package_components(db, package, payload, business_id)
     _audit(db, admin, business_id, "package_updated", "package", package.id, {"name": package.name})
     db.commit()
     package = db.scalar(
         select(RentalPackage)
+        .execution_options(populate_existing=True)
         .options(
             selectinload(RentalPackage.components)
             .selectinload(PackageComponent.product)
@@ -2115,6 +2426,22 @@ def update_package(
     if package is None:
         raise HTTPException(status_code=500, detail="Updated package could not be loaded")
     return _package_read(package, request)
+
+
+@api.get("/admin/packages/{package_id}/image")
+def admin_package_image(
+    package_id: int,
+    request: Request,
+    admin: User = Depends(administrator),
+    db: Session = Depends(get_db),
+):
+    business_id = _require_business_id(admin)
+    package = db.scalar(
+        select(RentalPackage).where(RentalPackage.id == package_id, RentalPackage.business_id == business_id)
+    )
+    if package is None or package.image_data is None or package.image_media_type is None:
+        raise HTTPException(status_code=404, detail="Package image not found")
+    return _image_response(request, package.image_data, package.image_media_type, cache_control="private, no-cache")
 
 
 @api.put("/admin/packages/{package_id}/image")
@@ -2166,30 +2493,34 @@ def admin_orders(admin: User = Depends(administrator), db: Session = Depends(get
 @api.get("/admin/customers")
 def admin_customers(admin: User = Depends(administrator), db: Session = Depends(get_db)):
     business_id = _require_business_id(admin)
-    customers = db.scalars(
-        select(User)
+    rows = db.execute(
+        select(User, BusinessCustomer.is_active)
         .join(BusinessCustomer, BusinessCustomer.customer_id == User.id)
         .where(
             BusinessCustomer.business_id == business_id,
             User.role == UserRole.CUSTOMER,
         )
         .order_by(User.created_at.desc())
-    )
+    ).all()
+    order_counts = {
+        customer_id: count
+        for customer_id, count in db.execute(
+            select(RentalOrder.customer_id, func.count(RentalOrder.id))
+            .where(RentalOrder.business_id == business_id)
+            .group_by(RentalOrder.customer_id)
+        )
+    }
     return [
         {
             "id": customer.id,
             "email": customer.email,
             "display_name": customer.display_name,
             "phone": customer.phone,
-            "is_active": db.scalar(
-                select(BusinessCustomer.is_active).where(
-                    BusinessCustomer.business_id == business_id,
-                    BusinessCustomer.customer_id == customer.id,
-                )
-            ),
+            "is_active": membership_active,
+            "order_count": order_counts.get(customer.id, 0),
             "created_at": customer.created_at,
         }
-        for customer in customers
+        for customer, membership_active in rows
     ]
 
 
@@ -2248,12 +2579,46 @@ def decide_order_status(
     order.status = payload.status
     if payload.status in {RentalStatus.REJECTED, RentalStatus.COMPLETED}:
         release_allocations(db, order)
+        now = datetime.now(timezone.utc)
+        pending_requests = db.scalars(
+            select(OrderRequest).where(
+                OrderRequest.order_id == order.id,
+                OrderRequest.business_id == business_id,
+                OrderRequest.status == RequestStatus.PENDING,
+            )
+        ).all()
+        for pending_request in pending_requests:
+            pending_request.status = RequestStatus.REJECTED
+            pending_request.decision_note = f"Closed automatically because the order was marked {payload.status.value}."
+            pending_request.decided_by_id = admin.id
+            pending_request.decided_at = now
     _add_history(
         db,
         order,
         admin,
         "status_changed",
         {"from": old_status.value, "to": payload.status.value, "note": payload.note},
+    )
+    _audit(
+        db,
+        admin,
+        business_id,
+        "order_status_changed",
+        "rental_order",
+        order.id,
+        {"from": old_status.value, "to": payload.status.value, "note": payload.note},
+    )
+    notify_user(
+        db,
+        user_id=order.customer_id,
+        business_id=business_id,
+        kind="order_status_changed",
+        title=f"Order #{order.id} is now {payload.status.value.replace('_', ' ')}",
+        message=(
+            f"Your rental request #{order.id} was updated to {payload.status.value.replace('_', ' ')}."
+            + (f" Note: {payload.note}" if payload.note else "")
+        ),
+        link=f"/orders/{order.id}",
     )
     db.commit()
     return _order_read(_load_order(db, order.id))
@@ -2262,11 +2627,15 @@ def decide_order_status(
 @api.get("/admin/requests")
 def admin_requests(admin: User = Depends(administrator), db: Session = Depends(get_db)):
     business_id = _require_business_id(admin)
-    requests = db.scalars(
-        select(OrderRequest)
+    rows = db.execute(
+        select(OrderRequest, User.display_name)
+        .join(RentalOrder, RentalOrder.id == OrderRequest.order_id)
+        .join(User, User.id == OrderRequest.customer_id)
         .where(
             OrderRequest.business_id == business_id,
+            RentalOrder.business_id == business_id,
             OrderRequest.status == RequestStatus.PENDING,
+            RentalOrder.status.in_(ACTIVE_ALLOCATION_STATUSES),
         )
         .order_by(OrderRequest.created_at)
     )
@@ -2275,13 +2644,14 @@ def admin_requests(admin: User = Depends(administrator), db: Session = Depends(g
             "id": item.id,
             "order_id": item.order_id,
             "customer_id": item.customer_id,
+            "customer_name": customer_name,
             "kind": item.kind.value,
             "reason": item.reason,
             "proposed_data": item.proposed_data,
             "before_data": item.before_data,
             "created_at": item.created_at,
         }
-        for item in requests
+        for item, customer_name in rows
     ]
 
 
@@ -2316,6 +2686,8 @@ def decide_order_request(
     before_status = order.status
     if payload.approved and request_record.kind == RequestKind.MODIFICATION:
         proposed = request_record.proposed_data
+        if proposed is None:
+            raise HTTPException(status_code=422, detail="This modification request has no proposed changes")
         candidate = OrderCreate.model_validate(proposed)
         if candidate.business_id != business_id:
             raise HTTPException(status_code=422, detail="The requested rental must remain with this business")
@@ -2330,6 +2702,7 @@ def decide_order_request(
             "total_cents": order.total_cents,
         }
         release_allocations(db, order)
+        db.flush()
         order.starts_at = candidate.starts_at
         order.ends_at = candidate.ends_at
         order.total_cents = total
@@ -2376,6 +2749,28 @@ def decide_order_request(
     request_record.decided_at = datetime.now(timezone.utc)
     if request_record.kind == RequestKind.CANCELLATION and payload.approved:
         _add_history(db, order, admin, "status_changed", {"from": before_status.value, "to": order.status.value})
+    _audit(
+        db,
+        admin,
+        business_id,
+        "order_request_decided",
+        "order_request",
+        request_record.id,
+        {"order_id": order.id, "kind": request_record.kind.value, "approved": payload.approved},
+    )
+    notify_user(
+        db,
+        user_id=order.customer_id,
+        business_id=business_id,
+        kind="order_request_decided",
+        title=f"Order #{order.id} {request_record.kind.value} {'approved' if payload.approved else 'rejected'}",
+        message=(
+            f"Your {request_record.kind.value} request for order #{order.id} was "
+            f"{'approved' if payload.approved else 'rejected'}."
+            + (f" Note: {payload.note}" if payload.note else "")
+        ),
+        link=f"/orders/{order.id}",
+    )
     db.commit()
     return _order_read(_load_order(db, order.id))
 
@@ -2406,14 +2801,20 @@ def record_manual_payment(
 ):
     business_id = _require_business_id(admin)
     order = db.scalar(
-        select(RentalOrder).where(
+        select(RentalOrder)
+        .where(
             RentalOrder.id == order_id,
             RentalOrder.business_id == business_id,
         )
+        .with_for_update()
     )
     if order is None:
         raise HTTPException(status_code=404, detail="Order not found")
-    if order.status not in {RentalStatus.PENDING_ADMIN, RentalStatus.CONFIRMED}:
+    if payload.kind == PaymentEntryKind.PAYMENT and order.status not in {
+        RentalStatus.PENDING_ADMIN,
+        RentalStatus.CONFIRMED,
+        RentalStatus.COMPLETED,
+    }:
         raise HTTPException(status_code=409, detail="Payments cannot be recorded for this order status")
     if payload.kind == PaymentEntryKind.REFUND:
         paid, _, _ = _payment_summary(_load_order(db, order_id))
@@ -2434,8 +2835,34 @@ def record_manual_payment(
         decided_at=datetime.now(timezone.utc),
     )
     db.add(entry)
-    _audit(db, admin, business_id, "manual_payment_recorded", "payment", entry.id, {"kind": payload.kind.value})
+    db.flush()
+    _add_history(
+        db,
+        order,
+        admin,
+        f"manual_{payload.kind.value}_recorded",
+        {"payment_id": entry.id, "amount_cents": entry.amount_cents, "method": entry.method.value},
+    )
+    _audit(
+        db,
+        admin,
+        business_id,
+        "manual_payment_recorded",
+        "payment",
+        entry.id,
+        {"order_id": order.id, "kind": payload.kind.value, "amount_cents": entry.amount_cents},
+    )
+    notify_user(
+        db,
+        user_id=order.customer_id,
+        business_id=business_id,
+        kind="payment_decided",
+        title=f"{payload.kind.value.title()} recorded on order #{order.id}",
+        message=f"A verified offline {payload.kind.value} was recorded on order #{order.id}.",
+        link=f"/orders/{order.id}",
+    )
     db.commit()
+    db.refresh(entry)
     return _payment_admin_result(entry)
 
 
@@ -2448,6 +2875,14 @@ def decide_payment(
     db: Session = Depends(get_db),
 ):
     business_id = _require_business_id(admin)
+    order = db.scalar(
+        select(RentalOrder).where(
+            RentalOrder.id == order_id,
+            RentalOrder.business_id == business_id,
+        )
+    )
+    if order is None:
+        raise HTTPException(status_code=404, detail="Payment entry not found")
     entry = db.scalar(
         select(PaymentEntry)
         .where(
@@ -2466,6 +2901,13 @@ def decide_payment(
     entry.decided_at = datetime.now(timezone.utc)
     if payload.note:
         entry.notes = f"{entry.notes or ''}\nDecision: {payload.note}".strip()
+    _add_history(
+        db,
+        order,
+        admin,
+        "payment_verified" if payload.approved else "payment_rejected",
+        {"payment_id": entry.id, "amount_cents": entry.amount_cents, "note": payload.note},
+    )
     _audit(
         db,
         admin,
@@ -2473,37 +2915,112 @@ def decide_payment(
         "payment_decided",
         "payment",
         entry.id,
-        {"approved": payload.approved, "note": payload.note},
+        {"order_id": order.id, "approved": payload.approved, "note": payload.note},
+    )
+    notify_user(
+        db,
+        user_id=order.customer_id,
+        business_id=business_id,
+        kind="payment_decided",
+        title=f"Payment {'verified' if payload.approved else 'rejected'} on order #{order.id}",
+        message=(
+            f"Your payment submission on order #{order.id} was "
+            f"{'verified' if payload.approved else 'rejected'}."
+            + (f" Note: {payload.note}" if payload.note else "")
+        ),
+        link=f"/orders/{order.id}",
     )
     db.commit()
+    db.refresh(entry)
     return _payment_admin_result(entry)
 
 
 @api.get("/admin/reports/summary")
-def report_summary(admin: User = Depends(administrator), db: Session = Depends(get_db)):
+def report_summary(
+    starts_at: datetime | None = None,
+    ends_at: datetime | None = None,
+    admin: User = Depends(administrator),
+    db: Session = Depends(get_db),
+):
+    if (starts_at is None) != (ends_at is None):
+        raise HTTPException(status_code=422, detail="Both starts_at and ends_at are required for date filtering")
+    if starts_at is not None:
+        if starts_at.tzinfo is None or ends_at is None or ends_at.tzinfo is None:
+            raise HTTPException(status_code=422, detail="Provide timezone-aware report dates")
+        starts_at = _as_utc(starts_at)
+        ends_at = _as_utc(ends_at)
+        if ends_at <= starts_at:
+            raise HTTPException(status_code=422, detail="ends_at must be later than starts_at")
+
     business_id = _require_business_id(admin)
-    order_count = db.scalar(
-        select(func.count(RentalOrder.id)).where(RentalOrder.business_id == business_id)
-    ) or 0
+    order_statement = select(RentalOrder).where(RentalOrder.business_id == business_id)
+    if starts_at is not None and ends_at is not None:
+        order_statement = order_statement.where(
+            RentalOrder.created_at >= starts_at,
+            RentalOrder.created_at <= ends_at,
+        )
+    orders = list(db.scalars(order_statement))
+    orders_by_status = {status_item.value: 0 for status_item in RentalStatus}
+    active_order_value_cents = 0
+    for order in orders:
+        orders_by_status[order.status.value] = orders_by_status.get(order.status.value, 0) + 1
+        if order.status in {RentalStatus.PENDING_ADMIN, RentalStatus.CONFIRMED, RentalStatus.COMPLETED}:
+            active_order_value_cents += order.total_cents
+
     active_assets = db.scalar(
         select(func.count(InventoryAsset.id)).where(
             InventoryAsset.business_id == business_id,
             InventoryAsset.condition == AssetCondition.AVAILABLE,
         )
     ) or 0
-    verified_entries = db.scalars(
-        select(PaymentEntry).where(
-            PaymentEntry.business_id == business_id,
-            PaymentEntry.status == PaymentEntryStatus.VERIFIED,
-        )
+
+    payment_statement = select(PaymentEntry).where(
+        PaymentEntry.business_id == business_id,
+        PaymentEntry.status == PaymentEntryStatus.VERIFIED,
     )
+    if starts_at is not None and ends_at is not None:
+        payment_statement = payment_statement.where(
+            PaymentEntry.paid_at >= starts_at,
+            PaymentEntry.paid_at <= ends_at,
+        )
+    verified_entries = db.scalars(payment_statement)
     collections_cents = sum(
         entry.amount_cents if entry.kind == PaymentEntryKind.PAYMENT else -entry.amount_cents
         for entry in verified_entries
     )
     return {
-        "orders": order_count,
+        "orders": len(orders),
+        "orders_by_status": orders_by_status,
+        "total_order_value_cents": active_order_value_cents,
         "assets_in_available_condition": active_assets,
         "verified_collections_cents": max(collections_cents, 0),
         "collections_note": "Verified offline payments less recorded refunds; not an accounting revenue report.",
     }
+
+
+@api.get("/admin/audit-logs")
+def admin_audit_logs(
+    limit: int = Query(default=100, ge=1, le=500),
+    admin: User = Depends(administrator),
+    db: Session = Depends(get_db),
+):
+    business_id = _require_business_admin(admin)
+    entries = db.scalars(
+        select(BusinessAuditLog)
+        .where(BusinessAuditLog.business_id == business_id)
+        .order_by(BusinessAuditLog.created_at.desc(), BusinessAuditLog.id.desc())
+        .limit(limit)
+    )
+    return [
+        {
+            "id": entry.id,
+            "business_id": entry.business_id,
+            "actor_id": entry.actor_id,
+            "action": entry.action,
+            "entity_type": entry.entity_type,
+            "entity_id": entry.entity_id,
+            "details": entry.details,
+            "created_at": entry.created_at,
+        }
+        for entry in entries
+    ]

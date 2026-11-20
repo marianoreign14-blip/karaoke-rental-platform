@@ -1,11 +1,23 @@
 import argparse
+from datetime import datetime, timedelta, timezone
 from getpass import getpass
+import hashlib
+import secrets
 
 from sqlalchemy import select
 
 from app.core.database import SessionLocal
 from app.core.security import hash_password
-from app.models import Business, BusinessCategory, Product, ProductCategory, QualityTier, User, UserRole
+from app.models import (
+    Business,
+    BusinessCategory,
+    PasswordResetToken,
+    Product,
+    ProductCategory,
+    QualityTier,
+    User,
+    UserRole,
+)
 
 SAMPLE_PRICES_CENTS = {
     ProductCategory.KARAOKE: {"Basic": 50_000, "Standard": 100_000, "Premium": 150_000},
@@ -15,6 +27,12 @@ SAMPLE_PRICES_CENTS = {
 
 
 def create_admin(email: str, display_name: str):
+    normalized_email = email.strip().lower()
+    normalized_name = display_name.strip()
+    if "@" not in normalized_email or "." not in normalized_email.split("@", 1)[-1]:
+        raise SystemExit("Provide a valid administrator email address.")
+    if not normalized_name:
+        raise SystemExit("Administrator display name is required.")
     password = getpass("Administrator password (12+ characters): ")
     confirmation = getpass("Confirm password: ")
     if len(password) < 12:
@@ -22,13 +40,12 @@ def create_admin(email: str, display_name: str):
     if password != confirmation:
         raise SystemExit("Passwords do not match.")
     with SessionLocal() as db:
-        normalized_email = email.strip().lower()
         if db.scalar(select(User.id).where(User.email == normalized_email)) is not None:
             raise SystemExit("An account with that email already exists.")
         admin = User(
             email=normalized_email,
             password_hash=hash_password(password),
-            display_name=display_name.strip(),
+            display_name=normalized_name,
             role=UserRole.PLATFORM_ADMIN,
         )
         db.add(admin)
@@ -67,7 +84,7 @@ def seed_catalog():
         for category, prices in SAMPLE_PRICES_CENTS.items():
             for tier_name, price_cents in prices.items():
                 tier = tiers[tier_name]
-                if (category, tier.id) in existing:
+                if (category.value, tier.id) in existing:
                     continue
                 db.add(
                     Product(
@@ -86,6 +103,21 @@ def seed_catalog():
         print("Prices remain non-billable until an administrator configures their basis.")
 
 
+def issue_password_reset(email: str, ttl_minutes: int = 30):
+    normalized_email = email.strip().lower()
+    with SessionLocal() as db:
+        user = db.scalar(select(User).where(User.email == normalized_email, User.is_active.is_(True)))
+        if user is None:
+            raise SystemExit("No active account found for that email address.")
+        raw_token = secrets.token_urlsafe(32)
+        token_hash = hashlib.sha256(raw_token.encode("utf-8")).hexdigest()
+        expires_at = datetime.now(timezone.utc) + timedelta(minutes=ttl_minutes)
+        db.add(PasswordResetToken(user_id=user.id, token_hash=token_hash, expires_at=expires_at))
+        db.commit()
+        print(f"One-time password reset token created for {user.email} (expires in {ttl_minutes} minutes):")
+        print(raw_token)
+
+
 def main():
     parser = argparse.ArgumentParser(prog="karaokewebapp")
     commands = parser.add_subparsers(dest="command", required=True)
@@ -93,9 +125,14 @@ def main():
     admin_parser.add_argument("--email", required=True)
     admin_parser.add_argument("--name", required=True)
     commands.add_parser("seed-catalog", help="Seed initial quality labels and sample catalog prices")
+    reset_parser = commands.add_parser("issue-password-reset", help="Generate a one-time password reset token")
+    reset_parser.add_argument("--email", required=True)
+    reset_parser.add_argument("--minutes", type=int, default=30)
     args = parser.parse_args()
     if args.command == "create-admin":
         create_admin(args.email, args.name)
+    elif args.command == "issue-password-reset":
+        issue_password_reset(args.email, args.minutes)
     else:
         seed_catalog()
 

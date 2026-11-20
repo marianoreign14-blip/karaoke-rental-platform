@@ -1,0 +1,113 @@
+<ion-header>
+  <header class="topbar">
+    <a class="brand" routerLink="/home">KARAOKE</a>
+    <nav>
+      <a routerLink="/home">Marketplace</a>
+      <a routerLink="/account">My account</a>
+      <button type="button" class="nav-signout" (click)="goToCheckout()">
+        Request <ion-badge>{{ cartCount() }}</ion-badge>
+      </button>
+    </nav>
+  </header>
+</ion-header>
+
+<ion-content>
+  <main>
+    @if (product) {
+    <nav class="breadcrumb" aria-label="Breadcrumb">
+      <a routerLink="/home">Marketplace</a> /
+      <a [routerLink]="['/business', product.business_slug]">{{ product.business_name }}</a> /
+      <span>{{ product.name }}</span>
+    </nav>
+    } @if (error) {
+    <p class="error" role="alert">{{ error }}</p>
+    } @if (notice) {
+    <div class="notice" role="status">
+      {{ notice }}
+      <button type="button" class="inline-link" (click)="goToCheckout()">Review & checkout →</button>
+    </div>
+    } @if (loading) {
+    <div class="loading"><ion-spinner name="crescent"></ion-spinner><span>Loading product…</span></div>
+    } @else if (product) {
+    <article class="detail-card">
+      <div class="media-box">
+        @if (product.image_url) {
+        <img [src]="product.image_url" [alt]="product.name" />
+        } @else {
+        <div class="placeholder" aria-hidden="true">{{ product.category }}</div>
+        }
+      </div>
+      <div class="info-box">
+        <p class="eyebrow">{{ product.category.toUpperCase() }} · {{ product.quality_name }}</p>
+        <h1>{{ product.name }}</h1>
+        <p class="business-meta">
+          Offered by <a [routerLink]="['/business', product.business_slug]">{{ product.business_name }}</a>
+        </p>
+        <p class="description">{{ product.description || 'Quality rental equipment available for your event.' }}</p>
+
+        <div class="price-box">
+          <strong>{{ priceLabel(product.price_cents, product.pricing_configured) }}</strong>
+          <small>{{ pricingSummary(product) }}</small>
+          @if (product.available_count !== null) {
+          <span class="availability">{{ product.available_count }} unit(s) available for selected dates</span>
+          } @else {
+          <span class="availability">{{ product.stock_count }} unit(s) in available condition</span>
+          }
+        </div>
+
+        <section class="window-box" aria-label="Check availability">
+          <h2>Check date availability</h2>
+          <div class="window-fields">
+            <label>
+              Rental starts
+              <input type="datetime-local" [(ngModel)]="startsInput" name="startsAt" (change)="onWindowChanged()" />
+            </label>
+            <label>
+              Rental ends
+              <input
+                type="datetime-local"
+                [(ngModel)]="endsInput"
+                [min]="startsInput || null"
+                name="endsAt"
+                (change)="onWindowChanged()"
+              />
+            </label>
+          </div>
+          @if (rentalWindowError) {
+          <p class="field-error" role="alert">{{ rentalWindowError }}</p>
+          }
+        </section>
+
+        <div class="action-row">
+          <label class="qty-field">
+            Quantity
+            <input type="number" min="1" max="1000" [(ngModel)]="quantity" name="quantity" />
+          </label>
+          <ion-button [disabled]="product.available_count === 0" (click)="addToRequest()">
+            Add to rental request
+          </ion-button>
+          <ion-button fill="outline" (click)="goToCheckout()">Go to request</ion-button>
+        </div>
+      </div>
+    </article>
+
+    <section class="storefront-card">
+      <p class="eyebrow">BUSINESS STOREFRONT</p>
+      <h2>{{ product.business.name }}</h2>
+      <p>{{ product.business.description || 'Browse all equipment and rental packages from this business.' }}</p>
+      @if (product.business.contact_phone || product.business.contact_email || product.business.address) {
+      <small>
+        {{ product.business.contact_phone }} {{ product.business.contact_email }} {{ product.business.address }}
+      </small>
+      }
+      <a class="store-link" [routerLink]="['/business', product.business.slug]">Visit storefront →</a>
+    </section>
+    } @else {
+    <div class="empty-card">
+      <h1>Product unavailable</h1>
+      <p>This equipment item may have been removed or is not currently listed.</p>
+      <a class="store-link" routerLink="/home">← Back to marketplace</a>
+    </div>
+    }
+  </main>
+</ion-content>

@@ -4,29 +4,7 @@
   --line: #e5dfd2;
   --soft: #f1ede3;
   --accent: #a63d40;
-  display: block;
   color: var(--ink);
-}
-
-.topbar {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  min-height: 68px;
-  padding: 0 clamp(16px, 5vw, 72px);
-  border-bottom: 1px solid var(--line);
-  background: rgba(255, 253, 248, 0.96);
-
-  nav {
-    display: flex;
-    gap: 20px;
-  }
-
-  nav a {
-    color: var(--accent);
-    font-size: 13px;
-    text-decoration: none;
-  }
 }
 
 .brand {
@@ -34,10 +12,6 @@
   font-weight: 800;
   letter-spacing: -0.07em;
   text-decoration: none;
-
-  span {
-    color: var(--accent);
-  }
 }
 
 main {
@@ -53,7 +27,8 @@ main {
 .order-actions,
 .actions,
 .payment-row,
-.small-card {
+.small-card,
+.staff-row {
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -73,14 +48,6 @@ main {
     margin: 0;
     color: var(--muted);
   }
-}
-
-.eyebrow {
-  margin: 0;
-  color: var(--accent);
-  font-size: 10px;
-  font-weight: 800;
-  letter-spacing: 0.13em;
 }
 
 h2 {
@@ -488,29 +455,7 @@ table {
   }
 }
 
-.business-image-preview {
-  display: block;
-  max-width: 100%;
-  max-height: 180px;
-  margin: 12px 0;
-  border: 1px solid var(--line);
-  border-radius: 9px;
-  object-fit: cover;
-}
-
-.banner-preview {
-  width: 100%;
-  height: 150px;
-}
-
-.upload-field {
-  margin-top: 20px;
-}
-
 .staff-row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
   gap: 12px;
   padding: 13px 0;
   border-bottom: 1px solid var(--line);
@@ -538,11 +483,28 @@ table {
   }
 }
 
-.product-image-preview {
+.product-image-preview,
+.package-image-preview,
+.business-image-preview {
+  display: block;
   max-width: 100%;
   max-height: 180px;
   border-radius: 8px;
   object-fit: cover;
+}
+
+.business-image-preview {
+  margin: 12px 0;
+  border: 1px solid var(--line);
+}
+
+.banner-preview {
+  width: 100%;
+  height: 150px;
+}
+
+.upload-field {
+  margin-top: 20px;
 }
 
 .stock-edit-hint {
@@ -565,13 +527,6 @@ table {
 .product-row-actions {
   display: flex;
   gap: 10px;
-}
-
-.package-image-preview {
-  max-width: 100%;
-  max-height: 180px;
-  border-radius: 8px;
-  object-fit: cover;
 }
 
 .saved-package-image {
@@ -601,9 +556,47 @@ table {
   align-items: center;
 }
 
+.payment-history {
+  margin-top: 14px;
+  padding-top: 10px;
+  border-top: 1px solid var(--line);
+
+  summary {
+    color: var(--accent);
+    font-size: 12px;
+    font-weight: 700;
+    cursor: pointer;
+  }
+}
+
+.empty-cell {
+  color: var(--muted);
+  text-align: center;
+  white-space: normal;
+}
+
+.danger {
+  color: #9a3e34;
+}
+
+.report-filters {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr)) auto;
+  align-items: end;
+  gap: 12px;
+  margin-top: 14px;
+}
+
+.status-breakdown {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 14px 0 8px;
+}
+
 .report-grid {
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 14px;
   margin-top: 20px;
 
@@ -626,28 +619,14 @@ table {
   }
 }
 
-.message,
-.empty-state {
-  padding: 13px 15px;
-  border: 1px solid var(--line);
-  border-radius: 8px;
-}
-
 .message {
   margin-bottom: 14px;
 }
 
-.notice {
-  border-color: #b8d7c3;
-  color: #194733;
-}
-
-.error {
-  border-color: #e5b7af;
-  color: #8c2f24;
-}
-
 .empty-state {
+  padding: 13px 15px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
   color: var(--muted);
 }
 
@@ -668,13 +647,16 @@ table {
 
   .page-heading,
   .request-card,
-  .order-card header {
+  .order-card header,
+  .payment-row {
     align-items: flex-start;
     flex-direction: column;
   }
 
   .order-summary,
-  .report-grid {
+  .report-grid,
+  .report-filters,
+  .form-grid {
     grid-template-columns: 1fr;
   }
 
@@ -682,17 +664,8 @@ table {
     min-width: 0;
   }
 
-  .form-grid {
-    grid-template-columns: 1fr;
-  }
-
   .wide {
     grid-column: auto;
-  }
-
-  .payment-row {
-    align-items: flex-start;
-    flex-direction: column;
   }
 
   .product-list-filters {

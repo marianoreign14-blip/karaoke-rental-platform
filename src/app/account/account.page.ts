@@ -6,10 +6,19 @@ import { Router, RouterLink } from '@angular/router';
 import { IonContent, IonHeader, IonSelect, IonSelectOption, IonSpinner } from '@ionic/angular';
 import { firstValueFrom } from 'rxjs';
 
-import { ApiService } from '../core/api.service';
-import type { OrderLineInput, Product, RentalOrder, RentalPackage, User } from '../core/api.service';
+import { ApiService, extractApiError } from '../core/api.service';
+import type {
+  BusinessApplication,
+  NotificationItem,
+  OrderLineInput,
+  Product,
+  RentalOrder,
+  RentalPackage,
+  User,
+} from '../core/api.service';
 
 type SelectableItem = { key: string; kind: 'product' | 'package'; item_id: number; label: string };
+type OrderFilter = 'all' | 'active' | 'completed' | 'closed';
 
 @Component({
   selector: 'app-account',
@@ -35,7 +44,11 @@ export class AccountPage implements OnInit, OnDestroy {
   private readonly changeDetector = inject(ChangeDetectorRef);
 
   user: User | null = this.api.user();
+  businessApplication: BusinessApplication | null = null;
   orders: RentalOrder[] = [];
+  notifications: NotificationItem[] = [];
+  unreadNotifications = 0;
+  orderFilter: OrderFilter = 'all';
   products: Product[] = [];
   packages: RentalPackage[] = [];
   items: SelectableItem[] = [];
@@ -47,6 +60,9 @@ export class AccountPage implements OnInit, OnDestroy {
   phone = '';
   profileName = '';
   profilePhone = '';
+  currentPassword = '';
+  newPassword = '';
+  confirmPassword = '';
   loading = false;
   saving = false;
   error = '';
@@ -69,7 +85,33 @@ export class AccountPage implements OnInit, OnDestroy {
   pendingProofPaymentId: number | null = null;
   paymentProofPreviews: Record<number, string> = {};
 
+  get filteredOrders(): RentalOrder[] {
+    if (this.orderFilter === 'active') {
+      return this.orders.filter((order) => order.status === 'pending_admin' || order.status === 'confirmed');
+    }
+    if (this.orderFilter === 'completed') {
+      return this.orders.filter((order) => order.status === 'completed');
+    }
+    if (this.orderFilter === 'closed') {
+      return this.orders.filter((order) => order.status === 'cancelled' || order.status === 'rejected');
+    }
+    return this.orders;
+  }
+
+  get activeOrderCount(): number {
+    return this.orders.filter((order) => order.status === 'pending_admin' || order.status === 'confirmed').length;
+  }
+
+  get totalUnpaidBalanceCents(): number {
+    return this.orders
+      .filter((order) => order.status !== 'cancelled' && order.status !== 'rejected')
+      .reduce((total, order) => total + Math.max(0, order.balance_cents), 0);
+  }
+
+  private loadGeneration = 0;
+
   ngOnDestroy(): void {
+    this.loadGeneration += 1;
     this.clearPaymentProofPreview();
     for (const preview of Object.values(this.paymentProofPreviews)) {
       URL.revokeObjectURL(preview);
@@ -77,31 +119,119 @@ export class AccountPage implements OnInit, OnDestroy {
   }
 
   ngOnInit(): void {
+    this.syncSessionView();
+  }
+
+  ionViewWillEnter(): void {
+    this.syncSessionView();
+  }
+
+  private syncSessionView(): void {
+    const sessionNotice = this.api.consumeSessionNotice();
+    if (sessionNotice) {
+      this.notice = sessionNotice;
+    }
+    this.user = this.api.user();
+    if (this.user && !this.api.hasValidSession()) {
+      this.user = null;
+      this.changeDetector.markForCheck();
+      return;
+    }
     if (this.user?.role === 'platform_admin') {
       void this.router.navigateByUrl('/platform');
     } else if (this.user?.role === 'business_admin' || this.user?.role === 'business_staff') {
       void this.router.navigateByUrl('/admin');
+    } else if (this.user?.role === 'business_pending') {
+      void this.checkApprovalStatus(false);
     } else if (this.user?.role === 'customer') {
-      this.loadAccount();
+      void this.loadAccount();
+    }
+    this.changeDetector.markForCheck();
+  }
+
+  async checkApprovalStatus(showPendingNotice = true): Promise<void> {
+    const generation = ++this.loadGeneration;
+    this.loading = true;
+    this.error = '';
+    try {
+      const profile = await firstValueFrom(this.api.profile());
+      if (generation !== this.loadGeneration || !this.api.hasValidSession()) {
+        return;
+      }
+      this.user = profile;
+      if (profile.role === 'business_admin' || profile.role === 'business_staff') {
+        await this.router.navigateByUrl('/admin');
+        return;
+      }
+      if (profile.role === 'platform_admin') {
+        await this.router.navigateByUrl('/platform');
+        return;
+      }
+      try {
+        const application = await firstValueFrom(this.api.myBusinessApplication());
+        if (generation !== this.loadGeneration || !this.api.hasValidSession()) {
+          return;
+        }
+        this.businessApplication = application;
+      } catch {
+        if (generation !== this.loadGeneration || !this.api.hasValidSession()) {
+          return;
+        }
+        this.businessApplication = null;
+      }
+      if (showPendingNotice) {
+        const status = this.businessApplication?.status;
+        this.notice =
+          status === 'rejected'
+            ? 'Your business application was rejected by the platform administrator.'
+            : status === 'suspended'
+              ? 'Your business account is currently suspended.'
+              : 'Your business application is still awaiting platform administrator approval.';
+      }
+    } catch (error) {
+      if (generation !== this.loadGeneration || !this.api.hasValidSession()) {
+        return;
+      }
+      this.error = this.errorMessage(error);
+    } finally {
+      if (generation === this.loadGeneration) {
+        this.loading = false;
+      }
+      this.changeDetector.markForCheck();
     }
   }
 
   async authenticate(): Promise<void> {
     this.error = '';
     this.notice = '';
+    const email = this.email.trim();
+    if (!email || !this.password) {
+      this.error = 'Enter your email address and password.';
+      return;
+    }
+    if (this.mode === 'register') {
+      if (!this.displayName.trim()) {
+        this.error = 'Enter your full name.';
+        return;
+      }
+      if (this.password.length < 12) {
+        this.error = 'Password must be at least 12 characters.';
+        return;
+      }
+    }
     this.saving = true;
     try {
       this.user =
         this.mode === 'register'
           ? await firstValueFrom(
               this.api.register({
-                email: this.email,
+                email,
                 password: this.password,
-                display_name: this.displayName,
-                phone: this.phone || null,
+                display_name: this.displayName.trim(),
+                phone: this.phone.trim() || null,
               }),
             )
-          : await firstValueFrom(this.api.login(this.email, this.password));
+          : await firstValueFrom(this.api.login(email, this.password));
       this.password = '';
       this.profileName = this.user.display_name;
       this.profilePhone = this.user.phone || '';
@@ -110,9 +240,10 @@ export class AccountPage implements OnInit, OnDestroy {
       } else if (this.user.role === 'business_admin' || this.user.role === 'business_staff') {
         await this.router.navigateByUrl('/admin');
       } else if (this.user.role === 'business_pending') {
+        void this.checkApprovalStatus(false);
         this.notice = 'Your business registration is awaiting platform administrator approval.';
       } else {
-        this.loadAccount();
+        void this.loadAccount();
         this.notice = 'You are signed in.';
       }
     } catch (error) {
@@ -124,10 +255,18 @@ export class AccountPage implements OnInit, OnDestroy {
   }
 
   signOut(): void {
+    this.loadGeneration += 1;
     this.api.logout();
     this.user = null;
+    this.businessApplication = null;
     this.orders = [];
+    this.notifications = [];
+    this.unreadNotifications = 0;
+    this.loading = false;
+    this.editingOrderId = null;
+    this.closePaymentForm();
     this.notice = 'You have signed out.';
+    this.changeDetector.markForCheck();
   }
 
   toggleAuthMode(): void {
@@ -139,15 +278,20 @@ export class AccountPage implements OnInit, OnDestroy {
   }
 
   async loadAccount(): Promise<void> {
+    const generation = ++this.loadGeneration;
     this.loading = true;
     this.error = '';
     try {
-      const [profile, orders, products, packages] = await Promise.all([
+      const [profile, orders, products, packages, notificationFeed] = await Promise.all([
         firstValueFrom(this.api.profile()),
         firstValueFrom(this.api.orders()),
         firstValueFrom(this.api.products()),
         firstValueFrom(this.api.packages()),
+        firstValueFrom(this.api.notifications(false, 30)),
       ]);
+      if (generation !== this.loadGeneration || !this.api.hasValidSession()) {
+        return;
+      }
       this.user = profile;
       this.profileName = profile.display_name;
       this.profilePhone = profile.phone || '';
@@ -155,29 +299,104 @@ export class AccountPage implements OnInit, OnDestroy {
       this.products = products;
       this.packages = packages;
       this.items = this.selectableItems(products, packages);
+      this.notifications = notificationFeed.items;
+      this.unreadNotifications = notificationFeed.unread_count;
     } catch (error) {
-      this.error = this.errorMessage(error);
-      if (this.error.includes('Authentication')) {
-        this.signOut();
+      if (generation !== this.loadGeneration) {
+        return;
+      }
+      const status = (error as { status?: number })?.status;
+      if (status === 401) {
+        this.user = null;
+        this.orders = [];
+        this.notifications = [];
+        this.unreadNotifications = 0;
+        this.notice = this.api.consumeSessionNotice() || 'Your session expired. Sign in again to continue.';
+      } else {
+        this.error = this.errorMessage(error);
       }
     } finally {
-      this.loading = false;
+      if (generation === this.loadGeneration) {
+        this.loading = false;
+      }
       this.changeDetector.markForCheck();
     }
   }
 
   async saveProfile(): Promise<void> {
+    if (!this.profileName.trim()) {
+      this.error = 'Display name is required.';
+      return;
+    }
     this.saving = true;
     this.error = '';
     this.notice = '';
     try {
-      this.user = await firstValueFrom(this.api.updateProfile(this.profileName, this.profilePhone || null));
+      this.user = await firstValueFrom(
+        this.api.updateProfile(this.profileName.trim(), this.profilePhone.trim() || null),
+      );
       this.notice = 'Profile updated.';
     } catch (error) {
       this.error = this.errorMessage(error);
     } finally {
       this.saving = false;
       this.changeDetector.markForCheck();
+    }
+  }
+
+  async changePassword(): Promise<void> {
+    this.error = '';
+    this.notice = '';
+    if (!this.currentPassword) {
+      this.error = 'Enter your current password.';
+      return;
+    }
+    if (this.newPassword.length < 12) {
+      this.error = 'New password must be at least 12 characters.';
+      return;
+    }
+    if (this.newPassword !== this.confirmPassword) {
+      this.error = 'New password confirmation does not match.';
+      return;
+    }
+    this.saving = true;
+    try {
+      const response = await firstValueFrom(this.api.changePassword(this.currentPassword, this.newPassword));
+      this.currentPassword = '';
+      this.newPassword = '';
+      this.confirmPassword = '';
+      this.notice = response.message;
+    } catch (error) {
+      this.error = this.errorMessage(error);
+    } finally {
+      this.saving = false;
+      this.changeDetector.markForCheck();
+    }
+  }
+
+  async markNotificationRead(item: NotificationItem): Promise<void> {
+    if (item.is_read) {
+      return;
+    }
+    try {
+      await firstValueFrom(this.api.markNotificationRead(item.id));
+      item.is_read = true;
+      this.unreadNotifications = Math.max(0, this.unreadNotifications - 1);
+      this.changeDetector.markForCheck();
+    } catch (error) {
+      this.error = this.errorMessage(error);
+    }
+  }
+
+  async markAllNotificationsRead(): Promise<void> {
+    try {
+      await firstValueFrom(this.api.markAllNotificationsRead());
+      this.notifications = this.notifications.map((item) => ({ ...item, is_read: true }));
+      this.unreadNotifications = 0;
+      this.notice = 'All notifications marked as read.';
+      this.changeDetector.markForCheck();
+    } catch (error) {
+      this.error = this.errorMessage(error);
     }
   }
 
@@ -238,6 +457,20 @@ export class AccountPage implements OnInit, OnDestroy {
       this.error = 'Enter a rental window and at least one requested item.';
       return;
     }
+    const starts = new Date(this.draftStart);
+    const ends = new Date(this.draftEnd);
+    if (Number.isNaN(starts.getTime()) || Number.isNaN(ends.getTime()) || ends <= starts) {
+      this.error = 'End date and time must be after the start.';
+      return;
+    }
+    if (
+      this.draftLines.some(
+        (line) => !Number.isInteger(Number(line.quantity)) || Number(line.quantity) < 1 || Number(line.quantity) > 1000,
+      )
+    ) {
+      this.error = 'Each item quantity must be a whole number from 1 to 1,000.';
+      return;
+    }
     this.saving = true;
     this.error = '';
     try {
@@ -245,9 +478,13 @@ export class AccountPage implements OnInit, OnDestroy {
         this.api.orderRequest(this.editingOrderId, {
           kind: 'modification',
           reason: this.requestReason.trim() || 'Requested order changes',
-          starts_at: new Date(this.draftStart).toISOString(),
-          ends_at: new Date(this.draftEnd).toISOString(),
-          lines: this.draftLines,
+          starts_at: starts.toISOString(),
+          ends_at: ends.toISOString(),
+          lines: this.draftLines.map((line) => ({
+            kind: line.kind,
+            item_id: line.item_id,
+            quantity: Number(line.quantity),
+          })),
         }),
       );
       this.notice =
@@ -286,14 +523,35 @@ export class AccountPage implements OnInit, OnDestroy {
     }
   }
 
+  openPaymentForm(order: RentalOrder): void {
+    if (this.paymentOrderId !== order.id) {
+      this.resetPaymentForm();
+      this.paymentMethod = 'cash';
+      this.paymentDate = this.localDateTime(new Date());
+      this.paymentOrderId = order.id;
+    }
+    this.error = '';
+  }
+
+  closePaymentForm(): void {
+    this.paymentOrderId = null;
+    this.resetPaymentForm();
+  }
+
   async submitPayment(): Promise<void> {
-    if (!this.paymentOrderId || !this.paymentAmount || !this.paymentDate) {
+    const rawAmount = String(this.paymentAmount ?? '').trim();
+    if (!this.paymentOrderId || !rawAmount || !this.paymentDate) {
       this.error = 'Enter a payment amount and payment date.';
       return;
     }
-    const amount = Number(this.paymentAmount);
+    const amount = Number(rawAmount);
+    const paidAt = new Date(this.paymentDate);
     if (!Number.isFinite(amount) || amount <= 0) {
       this.error = 'Enter a valid payment amount.';
+      return;
+    }
+    if (Number.isNaN(paidAt.getTime())) {
+      this.error = 'Enter a valid payment date.';
       return;
     }
     this.saving = true;
@@ -303,9 +561,9 @@ export class AccountPage implements OnInit, OnDestroy {
         this.api.submitPayment(this.paymentOrderId, {
           amount_cents: Math.round(amount * 100),
           method: this.paymentMethod,
-          paid_at: new Date(this.paymentDate).toISOString(),
-          reference_number: this.paymentReference || null,
-          notes: this.paymentNotes || null,
+          paid_at: paidAt.toISOString(),
+          reference_number: this.paymentReference.trim() || null,
+          notes: this.paymentNotes.trim() || null,
         }),
       );
       this.pendingProofOrderId = this.paymentOrderId;
@@ -378,7 +636,15 @@ export class AccountPage implements OnInit, OnDestroy {
   }
 
   paymentStatus(status: RentalOrder['payment_status']): string {
-    return status.replace('_', ' ');
+    return status.replaceAll('_', ' ');
+  }
+
+  paymentMethodLabel(method: string): string {
+    return method.replaceAll('_', ' ');
+  }
+
+  hasPendingRequest(order: RentalOrder): boolean {
+    return order.requests.some((request) => request.status === 'pending');
   }
 
   canRequest(order: RentalOrder): boolean {
@@ -443,7 +709,6 @@ export class AccountPage implements OnInit, OnDestroy {
   }
 
   private errorMessage(error: unknown): string {
-    const detail = (error as { error?: { detail?: unknown } })?.error?.detail;
-    return typeof detail === 'string' ? detail : 'The request could not be completed. Please try again.';
+    return extractApiError(error, 'The request could not be completed. Please try again.');
   }
 }

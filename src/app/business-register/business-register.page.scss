@@ -3,7 +3,6 @@
   --muted: #696b70;
   --line: #e5dfd2;
   --accent: #a63d40;
-  display: block;
   color: var(--ink);
 }
 
@@ -100,6 +99,38 @@ textarea {
 small {
   color: var(--muted);
   font-weight: 400;
+}
+
+.password-field {
+  display: grid;
+  gap: 7px;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.password-control {
+  position: relative;
+  display: flex;
+  align-items: center;
+
+  input {
+    padding-right: 72px;
+  }
+
+  .password-toggle {
+    position: absolute;
+    right: 7px;
+    min-height: 32px;
+    padding: 4px 8px;
+    border: 0;
+    border-radius: 6px;
+    background: transparent;
+    color: var(--accent);
+    font: inherit;
+    font-size: 12px;
+    font-weight: 750;
+    cursor: pointer;
+  }
 }
 
 .wide {

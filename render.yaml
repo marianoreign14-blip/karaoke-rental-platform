@@ -5,7 +5,7 @@ services:
     plan: free
     region: singapore
     buildCommand: pip install -r backend/requirements.txt
-    startCommand: alembic -c backend/alembic.ini upgrade head && uvicorn app.main:app --app-dir backend --host 0.0.0.0 --port $PORT
+    startCommand: alembic -c backend/alembic.ini upgrade head && uvicorn app.main:app --app-dir backend --host 0.0.0.0 --port $PORT --proxy-headers --forwarded-allow-ips='*'
     healthCheckPath: /api/live
     autoDeployTrigger: checksPass
     envVars:
@@ -19,6 +19,8 @@ services:
         sync: false
       - key: CORS_ORIGINS
         value: '["https://karaoke-marketplace.onrender.com"]'
+      - key: APP_BASE_URL
+        value: https://karaoke-marketplace.onrender.com
 
   - type: web
     name: karaoke-marketplace

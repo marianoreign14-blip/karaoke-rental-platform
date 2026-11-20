@@ -1,3 +1,8 @@
+import { registerLocaleData } from '@angular/common';
+import localeEnPh from '@angular/common/locales/en-PH';
+
+registerLocaleData(localeEnPh);
+
 // Polyfills for running unit tests under jsdom (the default Vitest environment).
 // Ionic components such as ion-menu and ion-split-pane query `window.matchMedia`,
 // which jsdom does not implement.

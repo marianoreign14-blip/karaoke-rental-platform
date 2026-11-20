@@ -3,14 +3,22 @@
     <a class="brand" routerLink="/home" aria-label="KARAOKE home">KARAOKE</a>
     <nav class="top-nav" aria-label="Main navigation">
       <a routerLink="/home" routerLinkActive="active">Marketplace</a>
-      <a routerLink="/account" routerLinkActive="active">{{ user() ? 'My account & orders' : 'Sign in' }}</a>
+      <a routerLink="/account" routerLinkActive="active">
+        {{ user() ? 'My account & orders' : 'Sign in' }} @if (unreadNotifications > 0) {
+        <span class="unread-pill" [attr.aria-label]="unreadNotifications + ' unread notifications'"
+          >{{ unreadNotifications }}</span
+        >
+        }
+      </a>
       @if (user()?.role === 'business_admin' || user()?.role === 'business_staff') {
       <a routerLink="/admin" routerLinkActive="active">Business admin</a>
       } @if (user()?.role === 'platform_admin') {
       <a routerLink="/platform" routerLinkActive="active">Platform admin</a>
       }
       <a routerLink="/business-register" routerLinkActive="active">List your business</a>
-      <a class="cart-link" href="#rental-request">Request <ion-badge>{{ cartCount }}</ion-badge></a>
+      <a class="cart-link" href="#rental-request" (click)="scrollToRequest($event)">
+        Request <ion-badge>{{ cartCount }}</ion-badge>
+      </a>
     </nav>
   </ion-toolbar>
 </ion-header>
@@ -57,7 +65,7 @@
         >
         }
         <div>
-          <p class="eyebrow" [style.color]="selectedBusiness.brand_primary">BUSINESS STOREFRONT</p>
+          <p class="eyebrow" [style.color]="selectedBusiness.brand_accent">BUSINESS STOREFRONT</p>
           <h1 style="margin: 7px 0; font-size: clamp(28px, 4vw, 42px)">{{ selectedBusiness.name }}</h1>
           <p>{{ selectedBusiness.description }}</p>
           @if (selectedBusiness.contact_phone || selectedBusiness.contact_email) {
@@ -65,7 +73,9 @@
           }
         </div>
       </div>
-      <a routerLink="/home">← Browse all businesses</a>
+      <a class="storefront-back" routerLink="/home" [style.color]="brandTextColor(selectedBusiness.brand_secondary)"
+        >← Browse all businesses</a
+      >
     </section>
     } @else {
     <section class="business-directory" aria-labelledby="business-directory-title">
@@ -196,7 +206,7 @@
           <ion-select aria-label="Quality" placeholder="All quality" [(ngModel)]="qualityTier" name="quality">
             <ion-select-option value="">All quality</ion-select-option>
             @for (tier of tiers; track tier.id) {
-            <ion-select-option [value]="tier.id">{{ tier.name }}</ion-select-option>
+            <ion-select-option [value]="'' + tier.id">{{ tier.name }}</ion-select-option>
             }
           </ion-select>
           }
@@ -231,7 +241,14 @@
               <span>{{ categoryLabel(product.category) }}</span>
               <span class="quality">{{ product.quality_name }}</span>
             </div>
-            <h3>{{ product.name }}</h3>
+            <h3>
+              <a class="card-title-link" [routerLink]="['/products', product.id]">{{ product.name }}</a>
+            </h3>
+            @if (!selectedBusiness) {
+            <a class="item-business-link" [routerLink]="['/business', product.business_slug]"
+              >{{ product.business_name }}</a
+            >
+            }
             <p>{{ product.description || 'A quality rental option for your event.' }}</p>
             <div class="product-bottom">
               <div>
@@ -242,13 +259,16 @@
                 <small>{{ product.stock_count }} in available condition · select dates to check</small>
                 }
               </div>
-              <ion-button
-                size="small"
-                fill="outline"
-                [disabled]="product.available_count === 0"
-                (click)="addProduct(product)"
-                >Add</ion-button
-              >
+              <div class="card-action-group">
+                <a class="details-link" [routerLink]="['/products', product.id]">Details</a>
+                <ion-button
+                  size="small"
+                  fill="outline"
+                  [disabled]="product.available_count === 0"
+                  (click)="addProduct(product)"
+                  >Add</ion-button
+                >
+              </div>
             </div>
           </div>
         </article>
@@ -276,7 +296,14 @@
           <img [src]="rentalPackage.image_url" [alt]="rentalPackage.name" loading="lazy" />
           }
           <div class="package-info">
-            <h3>{{ rentalPackage.name }}</h3>
+            <h3>
+              <a class="card-title-link" [routerLink]="['/packages', rentalPackage.id]">{{ rentalPackage.name }}</a>
+            </h3>
+            @if (!selectedBusiness) {
+            <a class="item-business-link" [routerLink]="['/business', rentalPackage.business_slug]"
+              >{{ rentalPackage.business_name }}</a
+            >
+            }
             <p>{{ rentalPackage.description }}</p>
             <ul>
               @for (component of rentalPackage.components; track component.product_id) {
@@ -289,12 +316,15 @@
             @if (rentalPackage.available_count !== null) {
             <small>{{ rentalPackage.available_count }} packages available</small>
             }
-            <ion-button
-              size="small"
-              [disabled]="rentalPackage.available_count === 0"
-              (click)="addPackage(rentalPackage)"
-              >Add package</ion-button
-            >
+            <div class="card-action-group">
+              <a class="details-link" [routerLink]="['/packages', rentalPackage.id]">Details</a>
+              <ion-button
+                size="small"
+                [disabled]="rentalPackage.available_count === 0"
+                (click)="addPackage(rentalPackage)"
+                >Add package</ion-button
+              >
+            </div>
           </div>
         </article>
         }
@@ -306,6 +336,9 @@
       <div class="request-copy">
         <p class="eyebrow">YOUR SELECTION</p>
         <h2 id="request-title">Review rental request</h2>
+        @if (cart.length > 0) {
+        <p><strong>Selected business:</strong> {{ cartBusinessName }}</p>
+        }
         <p>
           Catalog prices remain estimates until the administrator configures the billing basis for every selected item.
         </p>
@@ -344,14 +377,18 @@
       <div class="request-actions">
         <ion-button
           fill="outline"
-          [disabled]="loading || cart.some(item => !item.pricing_configured)"
+          [disabled]="quoting || cart.some(item => !item.pricing_configured)"
           (click)="calculateQuote()"
         >
-          Calculate estimate
+          {{ quoting ? 'Calculating…' : 'Calculate estimate' }}
         </ion-button>
-        <ion-button [disabled]="submitting || quoteTotal === null" (click)="submitOrder()">
+        <ion-button
+          [disabled]="submitting || quoteTotal === null || (user() !== null && user()?.role !== 'customer')"
+          (click)="submitOrder()"
+        >
           {{ submitting ? 'Submitting…' : 'Submit rental request' }}
         </ion-button>
+        <ion-button fill="clear" color="medium" (click)="clearSelection()">Clear selection</ion-button>
       </div>
       @if (cart.some(item => !item.pricing_configured)) {
       <p class="policy-note">
@@ -361,6 +398,8 @@
       <p class="policy-note">
         A customer account is required to submit an order. <a routerLink="/account">Sign in or register</a>.
       </p>
+      } @else if (user()?.role !== 'customer') {
+      <p class="policy-note">Rental requests must be submitted using a customer account.</p>
       } }
     </section>
   </main>

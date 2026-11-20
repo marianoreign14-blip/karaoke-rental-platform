@@ -2,11 +2,9 @@ import { expect, test } from '@playwright/test';
 
 test('visits the app root url', async ({ page }) => {
   await page.goto('/');
+  await expect(page.getByRole('heading', { name: 'Find a karaoke rental business' })).toBeVisible();
   await expect(page.getByRole('heading', { name: 'Make room for a good gathering.' })).toBeVisible();
-  await expect(page.getByRole('heading', { name: 'Equipment for your event' })).toBeVisible();
-  await expect(page.getByRole('heading', { name: 'Standard Table' })).toBeVisible();
-  await page.getByRole('button', { name: 'Add', exact: true }).first().click();
-  await expect(page.getByRole('button', { name: 'Calculate estimate' })).toBeDisabled();
+  await expect(page.getByRole('heading', { name: 'Browse rental equipment' })).toBeVisible();
 });
 
 test('opens account page and rejects unauthenticated admin access', async ({ page }) => {
@@ -55,22 +53,21 @@ test('signs in the administrator and opens the administration workspace', async 
   await page.locator('#account-password').fill(password!);
   await page.getByRole('button', { name: 'Sign in' }).click();
 
-  await expect(page.getByText('You are signed in.')).toBeVisible();
-  await page.setViewportSize({ width: 1024, height: 768 });
-  await expect(page.locator('.page-context')).toBeHidden();
-  await page.goto('/admin');
-  await expect(page.getByRole('heading', { name: 'Rental administration' })).toBeVisible();
-  await expect(page.getByRole('heading', { name: 'Customer requests' })).toBeVisible();
+  await expect(page).toHaveURL(/\/(admin|platform)$/);
+  if (page.url().endsWith('/admin')) {
+    await expect(page.getByRole('heading', { name: 'Customer requests' })).toBeVisible();
 
-  const sections = [
-    { button: 'Products & quality', heading: 'Add product' },
-    { button: 'Packages', heading: 'Create package' },
-    { button: 'Inventory', heading: 'Add inventory unit' },
-    { button: 'Customers', heading: 'Registered customers' },
-    { button: 'Reports', heading: 'Rental and collection snapshot' },
-  ];
-  for (const section of sections) {
-    await page.getByRole('button', { name: section.button }).click();
-    await expect(page.getByRole('heading', { name: section.heading })).toBeVisible();
+    const sections = [
+      { button: 'Products', heading: 'Catalog products' },
+      { button: 'Classifications', heading: 'Quality classifications' },
+      { button: 'Packages', heading: 'Saved packages' },
+      { button: 'Inventory', heading: 'Add inventory unit' },
+      { button: 'Customers', heading: 'Registered customers' },
+      { button: 'Reports', heading: 'Rental and collection snapshot' },
+    ];
+    for (const section of sections) {
+      await page.getByRole('button', { name: section.button }).click();
+      await expect(page.getByRole('heading', { name: section.heading })).toBeVisible();
+    }
   }
 });

@@ -4,7 +4,6 @@
   --line: #e5dfd2;
   --soft: #f1ede3;
   --accent: #a63d40;
-  display: block;
   color: var(--ink);
 }
 
@@ -265,6 +264,19 @@ button,
   }
 }
 
+.business-register-link {
+  display: inline-block;
+  margin-top: 12px;
+  color: var(--accent);
+  font-size: 13px;
+  font-weight: 700;
+  text-decoration: none;
+
+  &:hover {
+    text-decoration: underline;
+  }
+}
+
 .page-heading,
 .heading-actions,
 .section-title,
@@ -298,7 +310,7 @@ button,
 
 .profile-form {
   display: grid;
-  grid-template-columns: 1fr 1fr auto;
+  grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
   align-items: end;
   gap: 12px;
 }
@@ -435,7 +447,7 @@ button,
 
 .draft-line {
   display: grid;
-  grid-template-columns: 130px 1fr 110px auto;
+  grid-template-columns: 1fr 100px auto;
   align-items: center;
   gap: 8px;
 }

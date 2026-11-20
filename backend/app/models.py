@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timezone
 from enum import StrEnum
 
 from sqlalchemy import (
@@ -15,11 +15,32 @@ from sqlalchemy import (
     func,
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
-from sqlalchemy.types import JSON
+from sqlalchemy.types import JSON, TypeDecorator
 
 from app.core.database import Base
 
 JSON_DOCUMENT = JSON()
+
+
+class UTCDateTime(TypeDecorator):
+    """Stores timezone-aware UTC timestamps and always returns UTC-aware datetimes across PostgreSQL and SQLite."""
+
+    impl = DateTime(timezone=True)
+    cache_ok = True
+
+    def process_bind_param(self, value: datetime | None, dialect):
+        if value is None:
+            return None
+        if value.tzinfo is None:
+            return value.replace(tzinfo=timezone.utc)
+        return value.astimezone(timezone.utc)
+
+    def process_result_value(self, value: datetime | None, dialect):
+        if value is None:
+            return None
+        if value.tzinfo is None:
+            return value.replace(tzinfo=timezone.utc)
+        return value.astimezone(timezone.utc)
 
 
 class UserRole(StrEnum):
@@ -111,9 +132,9 @@ class Business(Base):
     status: Mapped[str] = mapped_column(String(20), default=BusinessStatus.PENDING.value, index=True)
     subscription_plan: Mapped[str] = mapped_column(String(40), default="demo")
     subscription_status: Mapped[str] = mapped_column(String(20), default="active")
-    subscription_ends_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
-    approved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    subscription_ends_at: Mapped[datetime | None] = mapped_column(UTCDateTime())
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime(), server_default=func.now())
+    approved_at: Mapped[datetime | None] = mapped_column(UTCDateTime())
     approved_by_id: Mapped[int | None] = mapped_column(Integer)
 
 
@@ -128,7 +149,7 @@ class User(Base):
     role: Mapped[UserRole] = mapped_column(enum_column(UserRole, "user_role"), default=UserRole.CUSTOMER)
     business_id: Mapped[int | None] = mapped_column(ForeignKey("businesses.id", ondelete="RESTRICT"), index=True)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime(), server_default=func.now())
 
 
 class BusinessCustomer(Base):
@@ -139,7 +160,7 @@ class BusinessCustomer(Base):
     business_id: Mapped[int] = mapped_column(ForeignKey("businesses.id", ondelete="CASCADE"), index=True)
     customer_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="RESTRICT"), index=True)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime(), server_default=func.now())
 
 
 class QualityTier(Base):
@@ -254,13 +275,13 @@ class RentalOrder(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     business_id: Mapped[int] = mapped_column(ForeignKey("businesses.id", ondelete="RESTRICT"), index=True)
     customer_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="RESTRICT"), index=True)
-    starts_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
-    ends_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    starts_at: Mapped[datetime] = mapped_column(UTCDateTime())
+    ends_at: Mapped[datetime] = mapped_column(UTCDateTime())
     status: Mapped[RentalStatus] = mapped_column(
         enum_column(RentalStatus, "rental_status"), default=RentalStatus.PENDING_ADMIN, index=True
     )
     total_cents: Mapped[int] = mapped_column(Integer)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime(), server_default=func.now())
     customer: Mapped[User] = relationship()
     lines: Mapped[list["OrderLine"]] = relationship(cascade="all, delete-orphan")
     payments: Mapped[list["PaymentEntry"]] = relationship(back_populates="rental_order")
@@ -295,9 +316,9 @@ class InventoryAllocation(Base):
     order_id: Mapped[int] = mapped_column(ForeignKey("rental_orders.id", ondelete="CASCADE"), index=True)
     order_line_id: Mapped[int] = mapped_column(ForeignKey("order_lines.id", ondelete="CASCADE"), index=True)
     asset_id: Mapped[int] = mapped_column(ForeignKey("inventory_assets.id", ondelete="RESTRICT"), index=True)
-    starts_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
-    ends_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
-    released_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), index=True)
+    starts_at: Mapped[datetime] = mapped_column(UTCDateTime(), index=True)
+    ends_at: Mapped[datetime] = mapped_column(UTCDateTime(), index=True)
+    released_at: Mapped[datetime | None] = mapped_column(UTCDateTime(), index=True)
     asset: Mapped[InventoryAsset] = relationship()
 
 
@@ -317,8 +338,8 @@ class OrderRequest(Base):
     before_data: Mapped[dict | None] = mapped_column(JSON_DOCUMENT)
     decision_note: Mapped[str | None] = mapped_column(Text)
     decided_by_id: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="RESTRICT"))
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
-    decided_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime(), server_default=func.now())
+    decided_at: Mapped[datetime | None] = mapped_column(UTCDateTime())
     rental_order: Mapped[RentalOrder] = relationship(back_populates="requests")
 
 
@@ -331,7 +352,7 @@ class OrderHistory(Base):
     actor_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="RESTRICT"))
     action: Mapped[str] = mapped_column(String(40))
     details: Mapped[dict] = mapped_column(JSON_DOCUMENT)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime(), server_default=func.now())
 
 
 class PaymentEntry(Base):
@@ -349,12 +370,12 @@ class PaymentEntry(Base):
     reference_number: Mapped[str | None] = mapped_column(String(160))
     proof_data: Mapped[bytes | None] = mapped_column(LargeBinary)
     proof_media_type: Mapped[str | None] = mapped_column(String(32))
-    paid_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    paid_at: Mapped[datetime] = mapped_column(UTCDateTime())
     notes: Mapped[str | None] = mapped_column(Text)
     submitted_by_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="RESTRICT"))
     verified_by_id: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="RESTRICT"))
-    submitted_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
-    decided_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    submitted_at: Mapped[datetime] = mapped_column(UTCDateTime(), server_default=func.now())
+    decided_at: Mapped[datetime | None] = mapped_column(UTCDateTime())
     rental_order: Mapped[RentalOrder] = relationship(back_populates="payments")
 
 
@@ -368,7 +389,7 @@ class BusinessAuditLog(Base):
     entity_type: Mapped[str] = mapped_column(String(80))
     entity_id: Mapped[int | None] = mapped_column(Integer)
     details: Mapped[dict] = mapped_column(JSON_DOCUMENT)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), index=True)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime(), server_default=func.now(), index=True)
 
 
 class PlatformSetting(Base):
@@ -377,4 +398,29 @@ class PlatformSetting(Base):
     key: Mapped[str] = mapped_column(String(80), primary_key=True)
     value: Mapped[str] = mapped_column(String(1000))
     updated_by_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="RESTRICT"))
-    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+    updated_at: Mapped[datetime] = mapped_column(UTCDateTime(), server_default=func.now(), onupdate=func.now())
+
+
+class Notification(Base):
+    __tablename__ = "notifications"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    business_id: Mapped[int | None] = mapped_column(ForeignKey("businesses.id", ondelete="CASCADE"), index=True)
+    kind: Mapped[str] = mapped_column(String(50))
+    title: Mapped[str] = mapped_column(String(160))
+    message: Mapped[str] = mapped_column(Text)
+    link: Mapped[str | None] = mapped_column(String(255))
+    is_read: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime(), server_default=func.now(), index=True)
+
+
+class PasswordResetToken(Base):
+    __tablename__ = "password_reset_tokens"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    token_hash: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    expires_at: Mapped[datetime] = mapped_column(UTCDateTime(), index=True)
+    used_at: Mapped[datetime | None] = mapped_column(UTCDateTime())
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime(), server_default=func.now())

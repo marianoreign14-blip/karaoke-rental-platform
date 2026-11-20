@@ -1,0 +1,122 @@
+<ion-header>
+  <header class="topbar">
+    <a class="brand" routerLink="/home">KARAOKE</a>
+    <nav>
+      <a routerLink="/home">Marketplace</a>
+      <a routerLink="/account">My account</a>
+      <button type="button" class="nav-signout" (click)="goToCheckout()">
+        Request <ion-badge>{{ cartCount() }}</ion-badge>
+      </button>
+    </nav>
+  </header>
+</ion-header>
+
+<ion-content>
+  <main>
+    @if (rentalPackage) {
+    <nav class="breadcrumb" aria-label="Breadcrumb">
+      <a routerLink="/home">Marketplace</a> /
+      <a [routerLink]="['/business', rentalPackage.business_slug]">{{ rentalPackage.business_name }}</a> /
+      <span>{{ rentalPackage.name }}</span>
+    </nav>
+    } @if (error) {
+    <p class="error" role="alert">{{ error }}</p>
+    } @if (notice) {
+    <div class="notice" role="status">
+      {{ notice }}
+      <button type="button" class="inline-link" (click)="goToCheckout()">Review & checkout →</button>
+    </div>
+    } @if (loading) {
+    <div class="loading"><ion-spinner name="crescent"></ion-spinner><span>Loading rental package…</span></div>
+    } @else if (rentalPackage) {
+    <article class="detail-card">
+      <div class="media-box">
+        @if (rentalPackage.image_url) {
+        <img [src]="rentalPackage.image_url" [alt]="rentalPackage.name" />
+        } @else {
+        <div class="placeholder" aria-hidden="true">RENTAL PACKAGE</div>
+        }
+      </div>
+      <div class="info-box">
+        <p class="eyebrow">RENTAL PACKAGE</p>
+        <h1>{{ rentalPackage.name }}</h1>
+        <p class="business-meta">
+          Offered by <a [routerLink]="['/business', rentalPackage.business_slug]">{{ rentalPackage.business_name }}</a>
+        </p>
+        <p class="description">
+          {{ rentalPackage.description || 'Complete karaoke equipment bundle configured for events.' }}
+        </p>
+
+        <div class="price-box">
+          <strong>{{ priceLabel(rentalPackage.price_cents, rentalPackage.pricing_configured) }}</strong>
+          <small>{{ pricingSummary(rentalPackage) }}</small>
+          @if (rentalPackage.available_count !== null) {
+          <span class="availability">{{ rentalPackage.available_count }} package(s) available for selected dates</span>
+          } @else {
+          <span class="availability">Select rental dates below to check package availability</span>
+          }
+        </div>
+
+        <section class="components-box">
+          <h2>Included equipment</h2>
+          <ul>
+            @for (item of rentalPackage.components; track item.product_id) {
+            <li>
+              <a [routerLink]="['/products', item.product_id]">{{ item.quantity }} × {{ item.name }}</a>
+              <span>{{ item.category }} · {{ item.quality_name }}</span>
+            </li>
+            }
+          </ul>
+        </section>
+
+        <section class="window-box" aria-label="Check availability">
+          <h2>Check date availability</h2>
+          <div class="window-fields">
+            <label>
+              Rental starts
+              <input type="datetime-local" [(ngModel)]="startsInput" name="startsAt" (change)="onWindowChanged()" />
+            </label>
+            <label>
+              Rental ends
+              <input
+                type="datetime-local"
+                [(ngModel)]="endsInput"
+                [min]="startsInput || null"
+                name="endsAt"
+                (change)="onWindowChanged()"
+              />
+            </label>
+          </div>
+          @if (rentalWindowError) {
+          <p class="field-error" role="alert">{{ rentalWindowError }}</p>
+          }
+        </section>
+
+        <div class="action-row">
+          <label class="qty-field">
+            Quantity
+            <input type="number" min="1" max="1000" [(ngModel)]="quantity" name="quantity" />
+          </label>
+          <ion-button [disabled]="rentalPackage.available_count === 0" (click)="addToRequest()">
+            Add package to request
+          </ion-button>
+          <ion-button fill="outline" (click)="goToCheckout()">Go to request</ion-button>
+        </div>
+      </div>
+    </article>
+
+    <section class="storefront-card">
+      <p class="eyebrow">BUSINESS STOREFRONT</p>
+      <h2>{{ rentalPackage.business.name }}</h2>
+      <p>{{ rentalPackage.business.description || 'Browse all equipment and rental packages from this business.' }}</p>
+      <a class="store-link" [routerLink]="['/business', rentalPackage.business.slug]">Visit storefront →</a>
+    </section>
+    } @else {
+    <div class="empty-card">
+      <h1>Package unavailable</h1>
+      <p>This rental package is currently inactive or unavailable.</p>
+      <a class="store-link" routerLink="/home">← Back to marketplace</a>
+    </div>
+    }
+  </main>
+</ion-content>
