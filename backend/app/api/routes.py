@@ -86,6 +86,11 @@ def health(db: Session = Depends(get_db)):
     return {"status": "ok"}
 
 
+@api.get("/live")
+def liveness():
+    return {"status": "ok"}
+
+
 def _user_read(user: User) -> dict:
     return {
         "id": user.id,

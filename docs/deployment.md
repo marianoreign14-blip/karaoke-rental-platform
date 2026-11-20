@@ -47,6 +47,7 @@ five initial demonstration businesses.
 The API service uses a paid Render compute plan because Render only supports
 pre-deploy commands on paid web services. Review Render's current pricing before
 deploying. Neon and Render charges depend on account plans and usage.
+The API is configured for Singapore to match the selected Neon region.
 
 ## 4. Verify the deployment
 
@@ -71,6 +72,12 @@ match.
 
 ## Operations
 
+- `/api/live` is the lightweight Render liveness probe; `/api/health` performs
+  a database query for an explicit connectivity check. Keeping the recurring
+  liveness probe database-free allows Neon to suspend an idle Free compute.
+- Neon Free is limited to 100 CU-hours and 1 GB per project. It is intended for
+  testing, not reliable production. A continuously active 0.25-CU compute uses
+  the monthly allowance in about 400 hours; real usage depends on traffic.
 - Migrations are automated before each API deployment. Test schema changes on
   a non-production Neon branch before applying them to production.
 - Product, package, storefront, and payment-proof images are stored in the
