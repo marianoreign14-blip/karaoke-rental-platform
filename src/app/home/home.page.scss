@@ -143,6 +143,12 @@ main {
   gap: 20px;
 }
 
+.package-filters {
+  ion-button {
+    margin: 0;
+  }
+}
+
 .request-panel {
   margin-top: 32px;
 }

@@ -60,6 +60,19 @@
           <a [routerLink]="['/business', product.business_slug]">{{ product.business_name }}</a>
         </p>
         <p class="description">{{ product.description || 'Quality rental equipment available for your event.' }}</p>
+        @if (product.specifications && (product.specifications | keyvalue).length > 0) {
+        <section class="specifications-box" aria-label="Equipment specifications">
+          <h2>Equipment specifications</h2>
+          <dl>
+            @for (specification of product.specifications | keyvalue; track specification.key) {
+            <div>
+              <dt>{{ specification.key }}</dt>
+              <dd>{{ specification.value }}</dd>
+            </div>
+            }
+          </dl>
+        </section>
+        }
 
         <div class="price-box">
           <div class="price-head">

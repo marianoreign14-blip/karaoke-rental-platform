@@ -39,6 +39,7 @@ describe('AdminPage', () => {
     business_slug: 'test-karaoke',
     name: 'Standard Karaoke',
     description: '',
+    specifications: {},
     category: 'karaoke',
     quality_tier_id: 2,
     quality_name: 'Standard',
@@ -144,6 +145,56 @@ describe('AdminPage', () => {
     component.productStockDrafts[10] = 5;
     await component.saveInlineStock(sampleProduct);
     expect(setProductStock).toHaveBeenCalledWith(10, 5);
+  });
+
+  it('applies a catalog template without assigning price or stock and saves it as a draft', async () => {
+    const { component, saveProduct } = setup('business_admin');
+    await component.refresh();
+    component.categories = [
+      { id: 1, name: 'karaoke', is_active: true },
+      { id: 2, name: 'Karaoke Machines', is_active: true },
+    ];
+    component.productTemplates = [
+      {
+        name: 'Portable Karaoke Machine',
+        category: 'Karaoke Machines',
+        description: 'Karaoke equipment for gatherings.',
+        specifications: { Connections: 'HDMI video' },
+        image_url: '/assets/catalog/karaoke.svg',
+      },
+    ];
+    component.selectedProductTemplateName = 'Portable Karaoke Machine';
+
+    await component.applyEquipmentTemplate();
+    expect(component.productName).toBe('Portable Karaoke Machine');
+    expect(component.productPrice).toBe('');
+    expect(component.productInitialStock).toBe('');
+    expect(component.productActive).toBe(false);
+
+    await component.saveProduct(false);
+    expect(saveProduct).toHaveBeenCalledWith(
+      expect.objectContaining({
+        is_active: false,
+        initial_stock: 0,
+        price_cents: 0,
+        image_url: '/assets/catalog/karaoke.svg',
+      }),
+      undefined,
+    );
+  });
+
+  it('does not publish an equipment template without confirmed stock, price, pricing, and image', async () => {
+    const { component, saveProduct } = setup('business_admin');
+    await component.refresh();
+    component.productName = 'Portable Karaoke Machine';
+    component.productCategory = 'karaoke';
+    component.productQualityId = '2';
+
+    await component.saveProduct(true);
+
+    expect(component.fieldErrors['productInitialStock']).toContain('at least one');
+    expect(component.fieldErrors['productPrice']).toContain('greater than zero');
+    expect(saveProduct).not.toHaveBeenCalled();
   });
 
   it('does not fetch owner-only staff or audit log endpoints for business_staff accounts', async () => {

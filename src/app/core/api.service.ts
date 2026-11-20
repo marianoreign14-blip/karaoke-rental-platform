@@ -79,6 +79,7 @@ export interface Product {
   business_slug: string;
   name: string;
   description: string;
+  specifications: Record<string, string>;
   category: string;
   quality_tier_id: number;
   quality_name: string;
@@ -109,6 +110,22 @@ export type ProductInput = Omit<
   initial_stock?: number;
 };
 
+export interface ProductTemplate {
+  name: string;
+  category: string;
+  description: string;
+  specifications: Record<string, string>;
+  image_url: string;
+}
+
+export interface PackageTemplate {
+  name: string;
+  category: string;
+  description: string;
+  suggested_equipment: string[];
+  image_url: string;
+}
+
 export interface PackageComponent {
   product_id: number;
   name: string;
@@ -124,12 +141,14 @@ export interface PackageComponentInput {
 
 export interface PackageInput {
   name: string;
+  category: string;
   description: string;
   price_cents: number | null;
   pricing_basis: Product['pricing_basis'];
   billing_interval_minutes: number | null;
   rounding_rule: Product['rounding_rule'];
   is_active: boolean;
+  image_url?: string | null;
   components: PackageComponentInput[];
 }
 
@@ -139,6 +158,7 @@ export interface RentalPackage {
   business_name: string;
   business_slug: string;
   name: string;
+  category: string;
   description: string;
   price_cents: number | null;
   pricing_basis: Product['pricing_basis'];
@@ -583,13 +603,25 @@ export class ApiService {
     return this.http.get<Business>(`${this.baseUrl}/marketplace/businesses/${encodeURIComponent(slug)}`);
   }
 
-  packages(starts_at?: string, ends_at?: string, business_id?: number | null): Observable<RentalPackage[]> {
+  packages(
+    starts_at?: string,
+    ends_at?: string,
+    business_id?: number | null,
+    search = '',
+    category = '',
+  ): Observable<RentalPackage[]> {
     let params = new HttpParams();
     if (business_id !== undefined && business_id !== null) {
       params = params.set('business_id', business_id);
     }
     if (starts_at && ends_at) {
       params = params.set('starts_at', starts_at).set('ends_at', ends_at);
+    }
+    if (search.trim()) {
+      params = params.set('search', search.trim());
+    }
+    if (category.trim()) {
+      params = params.set('category', category.trim());
     }
     return this.http.get<RentalPackage[]>(`${this.baseUrl}/catalog/packages`, { params });
   }
@@ -882,6 +914,18 @@ export class ApiService {
 
   adminCategories(): Observable<BusinessCategory[]> {
     return this.http.get<BusinessCategory[]>(`${this.baseUrl}/admin/categories`, { headers: this.headers() });
+  }
+
+  adminCatalogTemplates(): Observable<ProductTemplate[]> {
+    return this.http.get<ProductTemplate[]>(`${this.baseUrl}/admin/catalog-templates`, {
+      headers: this.headers(),
+    });
+  }
+
+  adminPackageTemplates(): Observable<PackageTemplate[]> {
+    return this.http.get<PackageTemplate[]>(`${this.baseUrl}/admin/package-templates`, {
+      headers: this.headers(),
+    });
   }
 
   saveCategory(category: { name: string; is_active: boolean }, id?: number): Observable<BusinessCategory> {

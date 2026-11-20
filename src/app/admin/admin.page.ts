@@ -20,8 +20,10 @@ import type {
   InventoryAsset,
   NotificationItem,
   OrderRequestReview,
+  PackageTemplate,
   PaymentEntry,
   Product,
+  ProductTemplate,
   QualityTier,
   RentalOrder,
   RentalPackage,
@@ -181,6 +183,7 @@ export class AdminPage implements OnInit, OnDestroy {
   productCategory: Product['category'] = 'karaoke';
   productQualityId = '';
   productDescription = '';
+  productSpecificationsText = '{}';
   productImageUrl = '';
   productImageFile: File | null = null;
   productImagePreviewUrl = '';
@@ -188,10 +191,12 @@ export class AdminPage implements OnInit, OnDestroy {
   productInitialStock = '';
   productPriceDrafts: Record<number, string | number> = {};
   productStockDrafts: Record<number, string | number> = {};
-  productPricingBasis: PricingBasis = 'per_rental';
+  productPricingBasis: PricingBasis = 'unconfigured';
   productInterval = '';
   productRounding: 'ceil' | 'pro_rata' = 'ceil';
-  productActive = true;
+  productActive = false;
+  productTemplates: ProductTemplate[] = [];
+  selectedProductTemplateName = '';
 
   qualityId: number | null = null;
   qualityName = '';
@@ -199,6 +204,7 @@ export class AdminPage implements OnInit, OnDestroy {
 
   packageId: number | null = null;
   packageName = '';
+  packageCategory = 'Karaoke Packages';
   packageDescription = '';
   packageImageUrl = '';
   packageImageFile: File | null = null;
@@ -207,7 +213,10 @@ export class AdminPage implements OnInit, OnDestroy {
   packagePricingBasis: PricingBasis = 'unconfigured';
   packageInterval = '';
   packageRounding: 'ceil' | 'pro_rata' = 'ceil';
-  packageActive = true;
+  packageActive = false;
+  packageTemplates: PackageTemplate[] = [];
+  selectedPackageTemplateName = '';
+  packageTemplateSuggestion: string[] = [];
   packageComponents: PackageDraft[] = [];
   selectedComponentId = '';
 
@@ -234,6 +243,27 @@ export class AdminPage implements OnInit, OnDestroy {
   selectSection(id: AdminSection): void {
     this.section = id;
     this.mobileMenuOpen = false;
+    if ((id === 'products' || id === 'packages') && this.isBusinessAdmin()) {
+      void this.loadCatalogTemplates();
+    }
+  }
+
+  private async loadCatalogTemplates(): Promise<void> {
+    if (this.productTemplates.length && this.packageTemplates.length) {
+      return;
+    }
+    try {
+      const [productTemplates, packageTemplates] = await Promise.all([
+        this.firstValue(this.api.adminCatalogTemplates()),
+        this.firstValue(this.api.adminPackageTemplates()),
+      ]);
+      this.productTemplates = productTemplates;
+      this.packageTemplates = packageTemplates;
+      this.changeDetector.markForCheck();
+    } catch (error) {
+      this.error = this.errorMessage(error);
+      this.changeDetector.markForCheck();
+    }
   }
 
   toggleProductSort(field: 'name' | 'price' | 'stock'): void {
@@ -852,6 +882,7 @@ export class AdminPage implements OnInit, OnDestroy {
   newProduct(): void {
     this.clearProductImageSelection();
     this.productId = null;
+    this.selectedProductTemplateName = '';
     this.productName = '';
     this.productCategory =
       this.categories.find((category) => category.is_active && category.name.toLowerCase() === 'karaoke')?.name ||
@@ -859,22 +890,56 @@ export class AdminPage implements OnInit, OnDestroy {
       '';
     this.productQualityId = this.standardQualityId();
     this.productDescription = '';
+    this.productSpecificationsText = '{}';
     this.productImageUrl = '';
     this.productPrice = '';
     this.productInitialStock = '';
-    this.productPricingBasis = 'per_rental';
+    this.productPricingBasis = 'unconfigured';
     this.productInterval = '';
     this.productRounding = 'ceil';
-    this.productActive = true;
+    this.productActive = false;
+  }
+
+  async applyEquipmentTemplate(): Promise<void> {
+    const template = this.productTemplates.find((item) => item.name === this.selectedProductTemplateName);
+    if (!template) {
+      return;
+    }
+    this.clearProductImageSelection();
+    let category = this.categories.find((item) => item.name.toLowerCase() === template.category.toLowerCase());
+    if (!category) {
+      try {
+        category = await this.firstValue(this.api.saveCategory({ name: template.category, is_active: true }));
+        this.categories = [...this.categories, category];
+      } catch (error) {
+        this.error = this.errorMessage(error);
+        this.changeDetector.markForCheck();
+        return;
+      }
+    }
+    this.productName = template.name;
+    this.productCategory = category.name;
+    this.productQualityId = this.standardQualityId();
+    this.productDescription = template.description;
+    this.productSpecificationsText = JSON.stringify(template.specifications, null, 2);
+    this.productImageUrl = template.image_url;
+    this.productPrice = '';
+    this.productInitialStock = '';
+    this.productPricingBasis = 'unconfigured';
+    this.productActive = false;
+    this.notice = 'Template applied. Confirm the price, quantity, and availability before publishing.';
+    this.changeDetector.markForCheck();
   }
 
   editProduct(product: Product): void {
     this.clearProductImageSelection();
     this.productId = product.id;
+    this.selectedProductTemplateName = '';
     this.productName = product.name;
     this.productCategory = product.category;
     this.productQualityId = String(product.quality_tier_id);
     this.productDescription = product.description;
+    this.productSpecificationsText = JSON.stringify(product.specifications || {}, null, 2);
     this.productImageUrl = product.image_url || '';
     this.productPrice = (product.price_cents / 100).toFixed(2);
     this.productInitialStock = String(product.stock_count);
@@ -892,13 +957,14 @@ export class AdminPage implements OnInit, OnDestroy {
     this.productCategory = product.category;
     this.productQualityId = String(product.quality_tier_id);
     this.productDescription = product.description;
+    this.productSpecificationsText = JSON.stringify(product.specifications || {}, null, 2);
     this.productImageUrl = product.image_url || '';
     this.productPrice = (product.price_cents / 100).toFixed(2);
     this.productInitialStock = '';
     this.productPricingBasis = product.pricing_basis || 'unconfigured';
     this.productInterval = product.billing_interval_minutes ? String(product.billing_interval_minutes) : '';
     this.productRounding = product.rounding_rule || 'ceil';
-    this.productActive = true;
+    this.productActive = false;
     this.section = 'products';
     this.error = '';
     this.notice = 'Product details copied. Enter an initial stock quantity for the copy.';
@@ -932,12 +998,29 @@ export class AdminPage implements OnInit, OnDestroy {
     this.error = '';
   }
 
-  async saveProduct(): Promise<void> {
+  async saveProduct(publish?: boolean): Promise<void> {
     this.fieldErrors = {};
     const rawPrice = this.textValue(this.productPrice);
     const rawInitialStock = this.textValue(this.productInitialStock);
     const price = Number(rawPrice);
     const initialStock = Number(rawInitialStock);
+    const shouldPublish = publish ?? this.productActive;
+    let specifications: Record<string, string> = {};
+    try {
+      const parsed: unknown = JSON.parse(this.productSpecificationsText || '{}');
+      if (
+        parsed === null ||
+        typeof parsed !== 'object' ||
+        Array.isArray(parsed) ||
+        Object.values(parsed).some((value) => typeof value !== 'string')
+      ) {
+        throw new Error('Specifications must be a JSON object with text values.');
+      }
+      specifications = Object.fromEntries(Object.entries(parsed).map(([key, value]) => [key.trim(), value.trim()]));
+    } catch (error) {
+      this.fieldErrors['productSpecifications'] =
+        error instanceof SyntaxError ? 'Enter valid JSON specifications.' : 'Use a JSON object with text values.';
+    }
     if (!this.productName.trim()) {
       this.fieldErrors['productName'] = 'Enter a product name.';
     }
@@ -947,14 +1030,31 @@ export class AdminPage implements OnInit, OnDestroy {
     if (!this.productQualityId) {
       this.fieldErrors['productQuality'] = 'Select a quality classification.';
     }
-    if (rawPrice === '' || !Number.isFinite(price) || price < 0) {
-      this.fieldErrors['productPrice'] = 'Enter a valid rental price (0 or higher).';
+    if (
+      (shouldPublish && (rawPrice === '' || price <= 0)) ||
+      (rawPrice !== '' && (!Number.isFinite(price) || price < 0))
+    ) {
+      this.fieldErrors['productPrice'] = shouldPublish
+        ? 'Enter a rental price greater than zero before publishing.'
+        : 'Enter a valid rental price (0 or higher).';
     }
     if (
       !this.productId &&
-      (rawInitialStock === '' || !Number.isInteger(initialStock) || initialStock < 0 || initialStock > 1000)
+      ((shouldPublish && initialStock < 1) ||
+        (rawInitialStock !== '' && (!Number.isInteger(initialStock) || initialStock < 0 || initialStock > 1000)))
     ) {
-      this.fieldErrors['productInitialStock'] = 'Enter a whole number from 0 to 1,000.';
+      this.fieldErrors['productInitialStock'] = shouldPublish
+        ? 'Enter at least one actual unit before publishing.'
+        : 'Enter a whole number from 0 to 1,000.';
+    }
+    if (shouldPublish && this.productId && Number(this.productInitialStock) < 1) {
+      this.fieldErrors['productInitialStock'] = 'Add at least one available unit before publishing.';
+    }
+    if (shouldPublish && this.productPricingBasis === 'unconfigured') {
+      this.fieldErrors['productPricingBasis'] = 'Choose a rental pricing basis before publishing.';
+    }
+    if (shouldPublish && !this.productImageUrl && !this.productImageFile) {
+      this.fieldErrors['productImage'] = 'Upload an appropriate image before publishing.';
     }
     const rawInterval = this.textValue(this.productInterval);
     if (this.productPricingBasis === 'duration' && (!rawInterval || Number(rawInterval) <= 0)) {
@@ -985,14 +1085,16 @@ export class AdminPage implements OnInit, OnDestroy {
           {
             name: this.productName.trim(),
             description: this.productDescription.trim(),
+            specifications,
             category: this.productCategory.trim(),
             quality_tier_id: Number(this.productQualityId),
-            price_cents: Math.round(price * 100),
+            price_cents: rawPrice === '' ? 0 : Math.round(price * 100),
             pricing_basis: this.productPricingBasis === 'unconfigured' ? null : this.productPricingBasis,
             billing_interval_minutes: this.productPricingBasis === 'duration' ? Number(rawInterval) : null,
             rounding_rule: this.productPricingBasis === 'duration' ? this.productRounding : null,
-            is_active: this.productActive,
-            ...(!this.productId ? { initial_stock: initialStock } : {}),
+            image_url: this.productImageUrl || null,
+            is_active: shouldPublish,
+            ...(!this.productId ? { initial_stock: rawInitialStock === '' ? 0 : initialStock } : {}),
           },
           this.productId || undefined,
         ),
@@ -1015,7 +1117,8 @@ export class AdminPage implements OnInit, OnDestroy {
           return;
         }
       }
-      this.notice = 'Product saved.';
+      this.productActive = shouldPublish;
+      this.notice = shouldPublish ? 'Product published.' : 'Product draft saved.';
       this.toast.success(this.notice);
       await this.refresh();
       this.newProduct();
@@ -1340,21 +1443,45 @@ export class AdminPage implements OnInit, OnDestroy {
   newPackage(): void {
     this.clearPackageImageSelection();
     this.packageId = null;
+    this.selectedPackageTemplateName = '';
+    this.packageTemplateSuggestion = [];
     this.packageName = '';
+    this.packageCategory = 'Karaoke Packages';
     this.packageDescription = '';
     this.packageImageUrl = '';
     this.packagePrice = '';
     this.packagePricingBasis = 'unconfigured';
     this.packageInterval = '';
     this.packageRounding = 'ceil';
-    this.packageActive = true;
+    this.packageActive = false;
     this.packageComponents = [];
+  }
+
+  applyPackageTemplate(): void {
+    const template = this.packageTemplates.find((item) => item.name === this.selectedPackageTemplateName);
+    if (!template) {
+      return;
+    }
+    this.clearPackageImageSelection();
+    this.packageName = template.name;
+    this.packageCategory = template.category;
+    this.packageDescription = template.description;
+    this.packageImageUrl = template.image_url;
+    this.packagePrice = '';
+    this.packagePricingBasis = 'unconfigured';
+    this.packageComponents = [];
+    this.packageTemplateSuggestion = template.suggested_equipment;
+    this.packageActive = false;
+    this.notice = 'Template applied. Add this business’s equipment and confirm its price before publishing.';
   }
 
   editPackage(rentalPackage: RentalPackage): void {
     this.clearPackageImageSelection();
     this.packageId = rentalPackage.id;
+    this.selectedPackageTemplateName = '';
+    this.packageTemplateSuggestion = [];
     this.packageName = rentalPackage.name;
+    this.packageCategory = rentalPackage.category;
     this.packageDescription = rentalPackage.description;
     this.packageImageUrl = rentalPackage.image_url || '';
     this.packagePrice = rentalPackage.price_cents === null ? '' : (rentalPackage.price_cents / 100).toFixed(2);
@@ -1444,23 +1571,34 @@ export class AdminPage implements OnInit, OnDestroy {
     this.packageComponents = this.packageComponents.filter((_, itemIndex) => itemIndex !== index);
   }
 
-  async savePackage(): Promise<void> {
+  availableStock(productId: number): number {
+    return this.products.find((product) => product.id === productId)?.stock_count ?? 0;
+  }
+
+  async savePackage(publish?: boolean): Promise<void> {
     this.fieldErrors = {};
+    const shouldPublish = publish ?? this.packageActive;
     if (!this.packageName.trim()) {
       this.fieldErrors['packageName'] = 'Enter a package name.';
     }
-    if (this.packageComponents.length === 0) {
+    if (shouldPublish && this.packageComponents.length === 0) {
       this.fieldErrors['packageComponents'] = 'Add at least one equipment item to this package.';
     }
     const rawPrice = this.textValue(this.packagePrice);
     const price = Number(rawPrice);
-    if (rawPrice !== '' && (!Number.isFinite(price) || price < 0)) {
-      this.fieldErrors['packagePrice'] = 'Enter a valid non-negative package price.';
-    } else if (
-      this.packagePricingBasis !== 'unconfigured' &&
-      (rawPrice === '' || !Number.isFinite(price) || price < 0)
+    if (
+      (shouldPublish && (rawPrice === '' || !Number.isFinite(price) || price <= 0)) ||
+      (rawPrice !== '' && (!Number.isFinite(price) || price < 0))
     ) {
+      this.fieldErrors['packagePrice'] = 'Enter a valid non-negative package price.';
+    }
+    if (shouldPublish && this.packagePricingBasis === 'unconfigured') {
+      this.fieldErrors['packagePricingBasis'] = 'Choose a rental pricing basis before publishing.';
+    } else if (this.packagePricingBasis !== 'unconfigured' && rawPrice === '') {
       this.fieldErrors['packagePrice'] = 'Enter a package price before setting the billing basis.';
+    }
+    if (shouldPublish && !this.packageImageUrl && !this.packageImageFile) {
+      this.fieldErrors['packageImage'] = 'Upload an appropriate cover image before publishing.';
     }
     const rawInterval = this.textValue(this.packageInterval);
     if (this.packagePricingBasis === 'duration' && (!rawInterval || Number(rawInterval) <= 0)) {
@@ -1470,16 +1608,19 @@ export class AdminPage implements OnInit, OnDestroy {
       this.error = 'Please fix the highlighted package fields below.';
       return;
     }
-    if (
-      this.packageComponents.some(
-        (component) =>
-          !Number.isInteger(Number(component.quantity)) ||
-          Number(component.quantity) < 1 ||
-          Number(component.quantity) > 1000,
-      )
-    ) {
-      this.fieldErrors['packageComponents'] = 'Each included item quantity must be a whole number from 1 to 1,000.';
-      this.error = 'Each package component quantity must be a whole number from 1 to 1,000.';
+    const unavailableComponent = this.packageComponents.find((component) => {
+      const product = this.products.find((item) => item.id === component.product_id);
+      return (
+        !Number.isInteger(Number(component.quantity)) ||
+        Number(component.quantity) < 1 ||
+        Number(component.quantity) > 1000 ||
+        (shouldPublish && (!product || Number(component.quantity) > product.stock_count))
+      );
+    });
+    if (unavailableComponent) {
+      this.fieldErrors['packageComponents'] =
+        'Each component must use a whole-number quantity within this business’s available stock.';
+      this.error = 'Adjust package quantities to fit the selected business’s available inventory.';
       return;
     }
     this.saving = true;
@@ -1490,12 +1631,14 @@ export class AdminPage implements OnInit, OnDestroy {
         this.api.savePackage(
           {
             name: this.packageName.trim(),
+            category: this.packageCategory.trim(),
             description: this.packageDescription.trim(),
             price_cents: rawPrice !== '' ? Math.round(price * 100) : null,
             pricing_basis: this.packagePricingBasis === 'unconfigured' ? null : this.packagePricingBasis,
             billing_interval_minutes: this.packagePricingBasis === 'duration' ? Number(rawInterval) : null,
             rounding_rule: this.packagePricingBasis === 'duration' ? this.packageRounding : null,
-            is_active: this.packageActive,
+            is_active: shouldPublish,
+            image_url: this.packageImageUrl || null,
             components: this.packageComponents.map((component) => ({
               product_id: component.product_id,
               quantity: Number(component.quantity),
@@ -1522,7 +1665,8 @@ export class AdminPage implements OnInit, OnDestroy {
           return;
         }
       }
-      this.notice = 'Package saved.';
+      this.packageActive = shouldPublish;
+      this.notice = shouldPublish ? 'Package published.' : 'Package draft saved.';
       this.toast.success(this.notice);
       this.newPackage();
       await this.refresh();

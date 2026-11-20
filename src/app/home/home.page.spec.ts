@@ -51,6 +51,7 @@ describe('HomePage', () => {
       business_slug: `business-${businessId}`,
       name: `Product ${id}`,
       description: '',
+      specifications: {},
       category: 'karaoke',
       quality_tier_id: 1,
       quality_name: 'Standard',
@@ -81,6 +82,7 @@ describe('HomePage', () => {
       business_slug: 'echovibe',
       name: 'Standard Karaoke',
       description: '',
+      specifications: {},
       category: 'karaoke',
       quality_tier_id: 1,
       quality_name: 'Standard',
@@ -98,5 +100,37 @@ describe('HomePage', () => {
     fixture.detectChanges();
 
     expect(fixture.nativeElement.textContent).toContain('1,000.00');
+  });
+
+  it('paginates the marketplace equipment list and clamps the current page', () => {
+    const sample: Product = {
+      id: 1,
+      business_id: 1,
+      business_name: 'EchoVibe',
+      business_slug: 'echovibe',
+      name: 'Karaoke equipment',
+      description: '',
+      specifications: {},
+      category: 'Karaoke Machines',
+      quality_tier_id: 1,
+      quality_name: 'Standard',
+      price_cents: 100000,
+      pricing_basis: 'per_rental',
+      pricing_configured: true,
+      billing_interval_minutes: null,
+      rounding_rule: null,
+      image_url: null,
+      is_active: true,
+      stock_count: 1,
+      available_count: null,
+    };
+    component.products = Array.from({ length: 13 }, (_, index) => ({ ...sample, id: index + 1 }));
+
+    expect(component.productPageCount).toBe(2);
+    expect(component.pagedProducts).toHaveLength(12);
+    component.setProductPage(2);
+    expect(component.pagedProducts).toHaveLength(1);
+    component.setProductPage(5);
+    expect(component.productPage).toBe(2);
   });
 });

@@ -5,14 +5,18 @@ from sqlalchemy.orm import Session
 
 from app.core.database import get_db
 from app.core.security import hash_password
+from app.catalog_data import EQUIPMENT_CATALOG
+from app.cli import populate_marketplace
 from app.models import (
     AssetCondition,
     Business,
     BusinessCategory,
     InventoryAsset,
+    PackageComponent,
     Product,
     ProductCategory,
     QualityTier,
+    RentalPackage,
     RentalStatus,
     User,
     UserRole,
@@ -43,6 +47,8 @@ def seed_product(client, *, pricing_basis=None, price_cents=50_000, stock=1):
         product = Product(
             business_id=business.id,
             name="Basic Karaoke",
+            description="Compact equipment for home gatherings.",
+            specifications={"Connections": "HDMI video and RCA audio"},
             category=ProductCategory.KARAOKE.value,
             quality_tier_id=tier.id,
             price_cents=price_cents,
@@ -153,6 +159,145 @@ def test_catalog_prices_are_visible_but_checkout_requires_configured_basis(clien
     quote = client.post("/api/orders/quote", json=order_payload(product_id))
     assert quote.status_code == 409
     assert "pricing must be configured" in quote.json()["detail"].lower()
+
+
+def test_catalog_search_includes_specs_and_package_category_filters(client):
+    product_id = seed_product(client, pricing_basis="per_rental", stock=2)
+    create_admin(client)
+    admin_headers = auth_header(client_token_for_user(client, "admin@example.com"))
+    package = client.post(
+        "/api/admin/packages",
+        json={
+            "name": "Family Sound Bundle",
+            "category": "Family Packages",
+            "price_cents": 90_000,
+            "pricing_basis": "per_rental",
+            "components": [{"product_id": product_id, "quantity": 1}],
+        },
+        headers=admin_headers,
+    )
+    assert package.status_code == 201, package.text
+    assert package.json()["category"] == "Family Packages"
+
+    products = client.get("/api/catalog/products", params={"search": "HDMI"})
+    assert [product["id"] for product in products.json()] == [product_id]
+    packages = client.get(
+        "/api/catalog/packages",
+        params={"search": "HDMI", "category": "Family Packages"},
+    )
+    assert [item["name"] for item in packages.json()] == ["Family Sound Bundle"]
+
+
+def test_package_drafts_allow_empty_components_but_published_packages_obey_stock(client):
+    product_id = seed_product(client, pricing_basis="per_rental", stock=1)
+    create_admin(client)
+    admin_headers = auth_header(client_token_for_user(client, "admin@example.com"))
+
+    oversized = client.post(
+        "/api/admin/packages",
+        json={
+            "name": "Oversized Bundle",
+            "price_cents": 90_000,
+            "pricing_basis": "per_rental",
+            "components": [{"product_id": product_id, "quantity": 2}],
+        },
+        headers=admin_headers,
+    )
+    assert oversized.status_code == 422
+    assert "available stock" in oversized.json()["detail"]
+
+    draft = client.post(
+        "/api/admin/packages",
+        json={"name": "Unfinished Bundle", "is_active": False, "components": []},
+        headers=admin_headers,
+    )
+    assert draft.status_code == 201, draft.text
+    assert draft.json()["components"] == []
+    assert draft.json()["is_active"] is False
+
+    empty_active = client.post(
+        "/api/admin/packages",
+        json={"name": "Empty Published Bundle", "components": []},
+        headers=admin_headers,
+    )
+    assert empty_active.status_code == 422
+
+
+def test_owner_catalog_templates_are_available_without_creating_inventory(client):
+    create_admin(client)
+    admin_headers = auth_header(client_token_for_user(client, "admin@example.com"))
+
+    products = client.get("/api/admin/catalog-templates", headers=admin_headers)
+    packages = client.get("/api/admin/package-templates", headers=admin_headers)
+
+    assert products.status_code == 200
+    assert len(products.json()) == 50
+    assert len({item["name"] for item in products.json()}) == 50
+    assert all("initial_stock" not in item and "price_cents" not in item for item in products.json())
+    assert packages.status_code == 200
+    assert len(packages.json()) == 18
+    assert all("suggested_equipment" in item for item in packages.json())
+
+
+def test_marketplace_seed_is_idempotent_and_keeps_each_package_in_its_business(client):
+    override = client.app.dependency_overrides[get_db]
+    generator = override()
+    db: Session = next(generator)
+    try:
+        business_slugs = {item[0] for item in EQUIPMENT_CATALOG}
+        db.add_all(
+            [
+                Business(
+                    name=slug,
+                    slug=slug,
+                    status="active",
+                    is_listed=True,
+                )
+                for slug in business_slugs
+            ]
+        )
+        db.flush()
+
+        first = populate_marketplace(db)
+        db.commit()
+        second = populate_marketplace(db)
+        db.commit()
+
+        assert first["products"] == 50
+        assert first["packages"] == 18
+        assert first["assets"] > first["products"]
+        assert first["images"] == 50
+        assert first["package_images"] == 18
+        assert second == {
+            "products": 0,
+            "assets": 0,
+            "packages": 0,
+            "components": 0,
+            "images": 0,
+            "package_images": 0,
+        }
+        assert db.query(Product).count() == 50
+        assert db.query(InventoryAsset).count() == first["assets"]
+        assert db.query(RentalPackage).count() == 18
+        assert db.query(PackageComponent).count() == first["components"]
+
+        public_products = client.get("/api/catalog/products")
+        public_packages = client.get("/api/catalog/packages")
+        assert len(public_products.json()) == 50
+        assert len(public_packages.json()) == 18
+        assert all(product["image_url"] and product["specifications"] for product in public_products.json())
+        assert all(package["components"] for package in public_packages.json())
+        assert all(
+            component["quantity"] <= next(
+                product["stock_count"]
+                for product in public_products.json()
+                if product["id"] == component["product_id"]
+            )
+            for package in public_packages.json()
+            for component in package["components"]
+        )
+    finally:
+        generator.close()
 
 
 def test_order_holds_inventory_and_admin_approval_releases_it_on_cancellation(client):

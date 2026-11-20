@@ -54,6 +54,7 @@
       <div class="info-box">
         <div class="badge-row">
           <app-status-badge value="package" label="Rental package" [showDot]="false"></app-status-badge>
+          <app-status-badge value="neutral" [label]="rentalPackage.category" [showDot]="false"></app-status-badge>
         </div>
         <h1>{{ rentalPackage.name }}</h1>
         <p class="business-meta">

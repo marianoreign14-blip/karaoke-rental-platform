@@ -3,12 +3,20 @@ import hashlib
 import re
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, status
 from pydantic import EmailStr, TypeAdapter, ValidationError
-from sqlalchemy import delete, func, select, update
+from sqlalchemy import Text, delete, func, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, selectinload
 from slowapi import Limiter
 from slowapi.util import get_remote_address
 
+from app.catalog_data import (
+    CATEGORY_IMAGES,
+    EQUIPMENT_CATALOG,
+    PACKAGE_CATALOG,
+    PACKAGE_IMAGE,
+    equipment_description,
+    equipment_specifications,
+)
 from app.core.database import get_db
 from app.core.security import (
     DUMMY_PASSWORD_HASH,
@@ -839,6 +847,36 @@ def admin_categories(admin: User = Depends(administrator), db: Session = Depends
     ]
 
 
+@api.get("/admin/catalog-templates")
+def admin_catalog_templates(admin: User = Depends(administrator)):
+    _require_business_admin(admin)
+    return [
+        {
+            "name": name,
+            "category": category,
+            "description": equipment_description(name, category),
+            "specifications": equipment_specifications(name, category),
+            "image_url": CATEGORY_IMAGES[category],
+        }
+        for _, name, category, _, _ in EQUIPMENT_CATALOG
+    ]
+
+
+@api.get("/admin/package-templates")
+def admin_package_templates(admin: User = Depends(administrator)):
+    _require_business_admin(admin)
+    return [
+        {
+            "name": name,
+            "category": category,
+            "description": description,
+            "suggested_equipment": list(component_names),
+            "image_url": PACKAGE_IMAGE,
+        }
+        for _, name, category, description, _, component_names in PACKAGE_CATALOG
+    ]
+
+
 @api.post("/admin/categories", status_code=status.HTTP_201_CREATED)
 def create_business_category(
     payload: BusinessCategoryInput,
@@ -986,6 +1024,7 @@ def _product_read(
         "business_slug": product.business.slug,
         "name": product.name,
         "description": product.description,
+        "specifications": product.specifications or {},
         "category": product.category,
         "quality_tier_id": product.quality_tier_id,
         "quality_name": product.quality_tier.name,
@@ -1091,7 +1130,10 @@ def catalog_products(
     if search and search.strip():
         term = _ilike_term(search)
         statement = statement.where(
-            Product.name.ilike(term, escape="\\") | Product.description.ilike(term, escape="\\")
+            Product.name.ilike(term, escape="\\")
+            | Product.description.ilike(term, escape="\\")
+            | Product.category.ilike(term, escape="\\")
+            | Product.specifications.cast(Text).ilike(term, escape="\\")
         )
     if sort == "name":
         statement = statement.order_by(Product.name, Product.id)
@@ -1181,6 +1223,7 @@ def _package_read(package: RentalPackage, request: Request, available_count: int
         "business_name": package.business.name,
         "business_slug": package.business.slug,
         "name": package.name,
+        "category": package.category,
         "description": package.description,
         "price_cents": package.price_cents,
         "pricing_basis": package.pricing_basis,
@@ -1257,6 +1300,8 @@ def catalog_package_image(package_id: int, request: Request, db: Session = Depen
 def catalog_packages(
     request: Request,
     business_id: int | None = None,
+    category: str | None = Query(default=None, max_length=80),
+    search: str | None = Query(default=None, max_length=120),
     starts_at: datetime | None = None,
     ends_at: datetime | None = None,
     db: Session = Depends(get_db),
@@ -1287,6 +1332,23 @@ def catalog_packages(
     )
     if business_id is not None:
         package_statement = package_statement.where(RentalPackage.business_id == business_id)
+    if category and category.strip():
+        package_statement = package_statement.where(
+            func.lower(func.trim(RentalPackage.category)) == category.strip().lower()
+        )
+    if search and search.strip():
+        term = _ilike_term(search)
+        package_statement = package_statement.where(
+            RentalPackage.name.ilike(term, escape="\\")
+            | RentalPackage.description.ilike(term, escape="\\")
+            | RentalPackage.components.any(
+                PackageComponent.product.has(
+                    Product.name.ilike(term, escape="\\")
+                    | Product.category.ilike(term, escape="\\")
+                    | Product.specifications.cast(Text).ilike(term, escape="\\")
+                )
+            )
+        )
     packages = db.scalars(package_statement.order_by(RentalPackage.name))
     result = []
     for package in packages:
@@ -1809,12 +1871,14 @@ def _product_from_input(
     existing_product: Product | None = None,
     request: Request | None = None,
 ) -> dict:
-    data = payload.model_dump(exclude={"image_url", "initial_stock"})
+    data = payload.model_dump(exclude={"image_url", "initial_stock", "specifications"})
     name = payload.name.strip()
     if not name:
         raise HTTPException(status_code=422, detail="Product name is required")
     data["name"] = name
     data["category"] = canonical_category
+    if "specifications" in payload.model_fields_set or isinstance(payload, ProductCreate):
+        data["specifications"] = payload.specifications or {}
     if "image_url" in payload.model_fields_set:
         incoming_url = str(payload.image_url) if payload.image_url else None
         if existing_product is not None and existing_product.image_data is not None and request is not None:
@@ -2321,8 +2385,12 @@ def update_asset_condition(
     return {"id": asset.id, "condition": asset.condition.value}
 
 
-def _package_from_input(payload: PackageInput) -> dict:
-    data = payload.model_dump(exclude={"image_url", "components"})
+def _package_from_input(payload: PackageInput, *, default_category: str | None = None) -> dict:
+    data = payload.model_dump(exclude={"image_url", "category", "components"})
+    if "category" in payload.model_fields_set:
+        data["category"] = payload.category
+    elif default_category is not None:
+        data["category"] = default_category
     if "image_url" in payload.model_fields_set:
         data["image_url"] = str(payload.image_url) if payload.image_url else None
     return data
@@ -2346,6 +2414,16 @@ def _replace_package_components(
     ).all()
     if len(products) != len(product_ids):
         raise HTTPException(status_code=422, detail="Every package component must reference an active product")
+    for component in payload.components:
+        available_stock = _product_stock_count(db, component.product_id, business_id)
+        if component.quantity > available_stock:
+            raise HTTPException(
+                status_code=422,
+                detail=(
+                    f"Package quantity for product {component.product_id} exceeds available stock "
+                    f"({available_stock} available)"
+                ),
+            )
     package.components.clear()
     db.flush()
     package.components.extend(
@@ -2368,7 +2446,10 @@ def create_package(
     db: Session = Depends(get_db),
 ):
     business_id = _require_business_admin(admin)
-    package = RentalPackage(business_id=business_id, **_package_from_input(payload))
+    package = RentalPackage(
+        business_id=business_id,
+        **_package_from_input(payload, default_category="Karaoke Packages"),
+    )
     db.add(package)
     db.flush()
     _replace_package_components(db, package, payload, business_id)

@@ -21,6 +21,7 @@ describe('ProductDetailPage', () => {
     business_slug: 'melody-rentals',
     name: 'Premium Karaoke Rig',
     description: 'Includes dual wireless mics',
+    specifications: {},
     category: 'karaoke',
     quality_tier_id: 3,
     quality_name: 'Premium',

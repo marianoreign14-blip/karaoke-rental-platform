@@ -67,13 +67,18 @@ export class HomePage implements OnInit {
   packages: RentalPackage[] = [];
   tiers: { id: number; name: string }[] = [];
   categories: { id: number; name: string }[] = [];
+  packageCategories: string[] = [];
   businesses: Business[] = [];
   selectedBusiness: Business | null = null;
   businessSearch = '';
   search = '';
   category = '';
+  packageCategory = '';
   qualityTier = '';
   sort = 'name';
+  productPage = 1;
+  packagePage = 1;
+  readonly catalogPageSize = 12;
   startsInput = this.cartService.startsInput();
   endsInput = this.cartService.endsInput();
   quoteTotal: number | null = null;
@@ -85,6 +90,7 @@ export class HomePage implements OnInit {
   notice = '';
   private lastDraft: OrderDraft | null = null;
   private knownCategories = new Set<string>();
+  private knownPackageCategories = new Set<string>();
   private pendingScrollToRequest = false;
 
   get cart(): CartEntry[] {
@@ -105,6 +111,32 @@ export class HomePage implements OnInit {
       this.businesses.find((business) => business.id === first.business_id)?.name ||
       `Business #${first.business_id}`
     );
+  }
+
+  get pagedProducts(): Product[] {
+    const start = (this.productPage - 1) * this.catalogPageSize;
+    return this.products.slice(start, start + this.catalogPageSize);
+  }
+
+  get productPageCount(): number {
+    return Math.max(1, Math.ceil(this.products.length / this.catalogPageSize));
+  }
+
+  get pagedPackages(): RentalPackage[] {
+    const start = (this.packagePage - 1) * this.catalogPageSize;
+    return this.packages.slice(start, start + this.catalogPageSize);
+  }
+
+  get packagePageCount(): number {
+    return Math.max(1, Math.ceil(this.packages.length / this.catalogPageSize));
+  }
+
+  setProductPage(page: number): void {
+    this.productPage = Math.min(Math.max(1, page), this.productPageCount);
+  }
+
+  setPackagePage(page: number): void {
+    this.packagePage = Math.min(Math.max(1, page), this.packagePageCount);
   }
 
   get rentalWindowError(): string {
@@ -130,6 +162,8 @@ export class HomePage implements OnInit {
       this.startsInput = this.cartService.startsInput();
       this.endsInput = this.cartService.endsInput();
       this.knownCategories.clear();
+      this.knownPackageCategories.clear();
+      this.packageCategory = '';
       void this.loadRouteContext(slug);
     });
     this.route.fragment.pipe(takeUntilDestroyed(this.destroyRef)).subscribe((fragment) => {
@@ -175,6 +209,8 @@ export class HomePage implements OnInit {
   loadCatalog(): void {
     this.loading = true;
     this.error = '';
+    this.productPage = 1;
+    this.packagePage = 1;
     const availability = this.rentalWindow();
     const filters = {
       search: this.search.trim(),
@@ -187,11 +223,23 @@ export class HomePage implements OnInit {
     };
     Promise.all([
       firstValueFrom(this.api.products(filters)),
-      firstValueFrom(this.api.packages(availability?.starts_at, availability?.ends_at, this.selectedBusiness?.id)),
+      firstValueFrom(
+        this.api.packages(
+          availability?.starts_at,
+          availability?.ends_at,
+          this.selectedBusiness?.id,
+          this.search,
+          this.packageCategory,
+        ),
+      ),
     ])
       .then(([products, packages]) => {
         this.products = products;
         this.packages = packages;
+        for (const rentalPackage of packages) {
+          this.knownPackageCategories.add(rentalPackage.category);
+        }
+        this.packageCategories = [...this.knownPackageCategories].sort((a, b) => a.localeCompare(b));
         if (!this.selectedBusiness) {
           for (const product of products) {
             this.knownCategories.add(product.category);
@@ -369,7 +417,10 @@ export class HomePage implements OnInit {
   }
 
   categoryLabel(category: string): string {
-    return category.charAt(0).toUpperCase() + category.slice(1);
+    return category
+      .split(/\s+/)
+      .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+      .join(' ');
   }
 
   brandTextColor(background: string): string {

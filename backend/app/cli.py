@@ -4,17 +4,30 @@ from getpass import getpass
 import hashlib
 import secrets
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 
 from app.core.database import SessionLocal
 from app.core.security import hash_password
+from app.catalog_data import (
+    CATEGORY_IMAGES,
+    EQUIPMENT_CATALOG,
+    PACKAGE_CATALOG,
+    PACKAGE_IMAGE,
+    catalog_image_bytes,
+    equipment_description,
+    equipment_specifications,
+)
 from app.models import (
+    AssetCondition,
     Business,
     BusinessCategory,
+    InventoryAsset,
+    PackageComponent,
     PasswordResetToken,
     Product,
     ProductCategory,
     QualityTier,
+    RentalPackage,
     User,
     UserRole,
 )
@@ -103,6 +116,197 @@ def seed_catalog():
         print("Prices remain non-billable until an administrator configures their basis.")
 
 
+def populate_marketplace(db):
+    business_slugs = {item[0] for item in EQUIPMENT_CATALOG}
+    businesses = {
+        business.slug: business
+        for business in db.scalars(select(Business).where(Business.slug.in_(business_slugs)))
+    }
+    missing = business_slugs - businesses.keys()
+    unavailable = {
+        slug
+        for slug, business in businesses.items()
+        if business.status != "active" or not business.is_listed
+    }
+    if missing or unavailable:
+        details = []
+        if missing:
+            details.append(f"missing businesses: {', '.join(sorted(missing))}")
+        if unavailable:
+            details.append(f"businesses not publicly active: {', '.join(sorted(unavailable))}")
+        raise SystemExit(f"Cannot seed marketplace: {'; '.join(details)}.")
+
+    tiers = {}
+    for slug, business in businesses.items():
+        tier = db.scalar(
+            select(QualityTier).where(
+                QualityTier.business_id == business.id,
+                func.lower(func.trim(QualityTier.name)) == "standard",
+            )
+        )
+        if tier is None:
+            tier = QualityTier(business_id=business.id, name="Standard")
+            db.add(tier)
+            db.flush()
+        tiers[slug] = tier
+
+        existing_categories = {
+            name.strip().lower()
+            for name in db.scalars(
+                select(BusinessCategory.name).where(BusinessCategory.business_id == business.id)
+            )
+        }
+        for category in CATEGORY_IMAGES:
+            if category.lower() not in existing_categories:
+                db.add(BusinessCategory(business_id=business.id, name=category, is_active=True))
+
+    db.flush()
+    products_by_business: dict[str, dict[str, Product]] = {slug: {} for slug in business_slugs}
+    added_products = 0
+    added_assets = 0
+    updated_images = 0
+    for slug, name, category, price_cents, stock in EQUIPMENT_CATALOG:
+        business = businesses[slug]
+        product = db.scalar(
+            select(Product).where(
+                Product.business_id == business.id,
+                func.lower(func.trim(Product.name)) == name.lower(),
+            )
+        )
+        if product is None:
+            product = Product(
+                business_id=business.id,
+                name=name,
+                description=equipment_description(name, category),
+                specifications=equipment_specifications(name, category),
+                category=category,
+                quality_tier_id=tiers[slug].id,
+                price_cents=price_cents,
+                pricing_basis="per_rental",
+                image_data=catalog_image_bytes(CATEGORY_IMAGES[category]),
+                image_media_type="image/svg+xml",
+                is_active=True,
+            )
+            db.add(product)
+            db.flush()
+            for sequence in range(1, stock + 1):
+                db.add(
+                    InventoryAsset(
+                        business_id=business.id,
+                        product_id=product.id,
+                        asset_tag=f"CAT-{product.id:06d}-{sequence:04d}",
+                        condition=AssetCondition.AVAILABLE,
+                    )
+                )
+            added_products += 1
+            added_assets += stock
+        elif (
+            not product.is_active
+            or product.category != category
+            or product.quality_tier_id != tiers[slug].id
+        ):
+            continue
+        elif (
+            product.image_data is None
+            and product.image_url == CATEGORY_IMAGES[category]
+        ):
+            product.image_data = catalog_image_bytes(CATEGORY_IMAGES[category])
+            product.image_media_type = "image/svg+xml"
+            product.image_url = None
+            updated_images += 1
+        products_by_business[slug][name] = product
+
+    added_packages = 0
+    added_components = 0
+    updated_package_images = 0
+    for slug, name, category, description, price_cents, component_names in PACKAGE_CATALOG:
+        business = businesses[slug]
+        if db.scalar(
+            select(RentalPackage.id).where(
+                RentalPackage.business_id == business.id,
+                func.lower(func.trim(RentalPackage.name)) == name.lower(),
+            )
+        ) is not None:
+            existing_package = db.scalar(
+                select(RentalPackage).where(
+                    RentalPackage.business_id == business.id,
+                    func.lower(func.trim(RentalPackage.name)) == name.lower(),
+                )
+            )
+            if (
+                existing_package is not None
+                and existing_package.image_data is None
+                and existing_package.image_url == PACKAGE_IMAGE
+            ):
+                existing_package.image_data = catalog_image_bytes(PACKAGE_IMAGE)
+                existing_package.image_media_type = "image/svg+xml"
+                existing_package.image_url = None
+                updated_package_images += 1
+            continue
+        components = [products_by_business[slug].get(product_name) for product_name in component_names]
+        if any(product is None for product in components):
+            continue
+        component_stock = {
+            product.id: db.scalar(
+                select(func.count(InventoryAsset.id)).where(
+                    InventoryAsset.business_id == business.id,
+                    InventoryAsset.product_id == product.id,
+                    InventoryAsset.condition == AssetCondition.AVAILABLE,
+                )
+            )
+            or 0
+            for product in components
+        }
+        if any(component_stock[product.id] < 1 for product in components):
+            continue
+        package = RentalPackage(
+            business_id=business.id,
+            name=name,
+            category=category,
+            description=description,
+            price_cents=price_cents,
+            pricing_basis="per_rental",
+            image_data=catalog_image_bytes(PACKAGE_IMAGE),
+            image_media_type="image/svg+xml",
+            is_active=True,
+        )
+        db.add(package)
+        db.flush()
+        db.add_all(
+            [
+                PackageComponent(
+                    business_id=business.id,
+                    package_id=package.id,
+                    product_id=product.id,
+                    quantity=1,
+                )
+                for product in components
+            ]
+        )
+        added_packages += 1
+        added_components += len(components)
+
+    return {
+        "products": added_products,
+        "assets": added_assets,
+        "packages": added_packages,
+        "components": added_components,
+        "images": added_products + updated_images,
+        "package_images": added_packages + updated_package_images,
+    }
+
+
+def seed_marketplace():
+    with SessionLocal.begin() as db:
+        result = populate_marketplace(db)
+    print(
+        "Marketplace catalog ready: "
+        f"{result['products']} products, {result['assets']} inventory units, "
+        f"{result['packages']} packages, and {result['components']} package components added; "
+        f"{result['images']} product images and {result['package_images']} package covers added."
+    )
+
+
 def issue_password_reset(email: str, ttl_minutes: int = 30):
     normalized_email = email.strip().lower()
     with SessionLocal() as db:
@@ -128,11 +332,14 @@ def main():
     reset_parser = commands.add_parser("issue-password-reset", help="Generate a one-time password reset token")
     reset_parser.add_argument("--email", required=True)
     reset_parser.add_argument("--minutes", type=int, default=30)
+    commands.add_parser("seed-marketplace", help="Seed the public marketplace with rental products and packages")
     args = parser.parse_args()
     if args.command == "create-admin":
         create_admin(args.email, args.name)
     elif args.command == "issue-password-reset":
         issue_password_reset(args.email, args.minutes)
+    elif args.command == "seed-marketplace":
+        seed_marketplace()
     else:
         seed_catalog()
 

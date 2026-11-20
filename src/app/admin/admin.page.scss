@@ -38,6 +38,36 @@ h2 {
   font-size: 19px;
 }
 
+.package-preview {
+  display: grid;
+  gap: 8px;
+  margin: 18px 0;
+  padding: 16px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--bg-subtle);
+
+  h3,
+  p,
+  ul {
+    margin: 0;
+  }
+
+  img {
+    width: min(100%, 280px);
+    aspect-ratio: 16 / 9;
+    object-fit: cover;
+    border-radius: var(--radius-md);
+    background: var(--bg-surface);
+  }
+
+  ul {
+    display: grid;
+    gap: 4px;
+    padding-left: 20px;
+  }
+}
+
 .admin-section {
   margin-top: 8px;
 }

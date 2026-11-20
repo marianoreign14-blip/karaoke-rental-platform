@@ -640,6 +640,22 @@
             </div>
             <div class="form-grid product-quick-fields">
               <p class="form-section-title">Basic product information</p>
+              <label class="wide">
+                Start from an equipment template
+                <select
+                  [(ngModel)]="selectedProductTemplateName"
+                  name="productTemplate"
+                  (change)="applyEquipmentTemplate()"
+                >
+                  <option value="">Create a custom product</option>
+                  @for (template of productTemplates; track template.name) {
+                  <option [value]="template.name">{{ template.name }} · {{ template.category }}</option>
+                  }
+                </select>
+                <small
+                  >Templates only fill product details; confirm price, real quantity, and availability yourself.</small
+                >
+              </label>
               <label>
                 <span>Product name <span class="required-mark" aria-hidden="true">*</span></span>
                 <input
@@ -693,7 +709,10 @@
                 }
               </label>
               <label>
-                <span>Rental price (₱) <span class="required-mark" aria-hidden="true">*</span></span>
+                <span
+                  >Rental price (₱) @if (productActive) {
+                  <span class="required-mark" aria-hidden="true">*</span> }</span
+                >
                 <input
                   type="number"
                   min="0"
@@ -710,7 +729,10 @@
               </label>
               @if (!productId) {
               <label>
-                <span>Initial stock quantity <span class="required-mark" aria-hidden="true">*</span></span>
+                <span
+                  >Initial stock quantity @if (productActive) {
+                  <span class="required-mark" aria-hidden="true">*</span> }</span
+                >
                 <input
                   type="number"
                   min="0"
@@ -732,7 +754,7 @@
 
               <p class="form-section-title">Product imagery</p>
               <label class="wide"
-                >Product image (optional, JPEG/PNG/WebP, 5 MB max)
+                >Product image (JPEG/PNG/WebP, 5 MB max)
                 <input
                   #productImageInput
                   type="file"
@@ -752,6 +774,8 @@
                 [alt]="productName || 'Product image preview'"
                 (error)="productId && loadProtectedProductImage(productId)"
               />
+              } @if (fieldErrors['productImage']) {
+              <span class="field-error wide" role="alert">{{ fieldErrors['productImage'] }}</span>
               }
 
               <details class="wide advanced-settings" [open]="productId !== null">
@@ -765,6 +789,19 @@
                       maxlength="4000"
                       placeholder="Add product details for customers"
                     ></textarea>
+                  </label>
+                  <label class="wide">
+                    Equipment specifications (JSON text values)
+                    <textarea
+                      [(ngModel)]="productSpecificationsText"
+                      name="productSpecifications"
+                      rows="5"
+                      placeholder='{"Power":"...", "Connections":"..."}'
+                      [attr.aria-invalid]="fieldErrors['productSpecifications'] ? 'true' : null"
+                    ></textarea>
+                    @if (fieldErrors['productSpecifications']) {
+                    <span class="field-error" role="alert">{{ fieldErrors['productSpecifications'] }}</span>
+                    }
                   </label>
                   <label>
                     Billing basis
@@ -800,9 +837,14 @@
                 </div>
               </details>
             </div>
-            <button type="button" (click)="saveProduct()" [disabled]="saving">
-              {{ productId ? 'Save product' : 'Create product' }}
-            </button>
+            <div class="actions">
+              <button type="button" class="secondary-button" (click)="saveProduct(false)" [disabled]="saving">
+                Save as draft
+              </button>
+              <button type="button" (click)="saveProduct(true)" [disabled]="saving">
+                {{ productId ? 'Save and publish' : 'Publish listing' }}
+              </button>
+            </div>
           </div>
           } @else {
           <p class="empty-state">
@@ -1071,6 +1113,20 @@
             </div>
             <div class="form-grid">
               <p class="form-section-title">Bundle pricing & identity</p>
+              <label class="wide">
+                Start from a package template
+                <select
+                  [(ngModel)]="selectedPackageTemplateName"
+                  name="packageTemplate"
+                  (change)="applyPackageTemplate()"
+                >
+                  <option value="">Create a custom package</option>
+                  @for (template of packageTemplates; track template.name) {
+                  <option [value]="template.name">{{ template.name }}</option>
+                  }
+                </select>
+                <small>Templates never add stock. Choose only equipment already in this business’s inventory.</small>
+              </label>
               <label>
                 <span>Name <span class="required-mark" aria-hidden="true">*</span></span>
                 <input
@@ -1083,6 +1139,10 @@
                 @if (fieldErrors['packageName']) {
                 <span class="field-error" role="alert">{{ fieldErrors['packageName'] }}</span>
                 }
+              </label>
+              <label>
+                Package category
+                <input [(ngModel)]="packageCategory" name="packageCategory" maxlength="80" />
               </label>
               <label>
                 <span>Package price (₱)</span>
@@ -1141,6 +1201,8 @@
                 [alt]="packageName || 'Package image preview'"
                 (error)="packageId && loadProtectedPackageImage(packageId)"
               />
+              } @if (fieldErrors['packageImage']) {
+              <span class="field-error wide" role="alert">{{ fieldErrors['packageImage'] }}</span>
               }
               <label class="wide"
                 >Description
@@ -1155,7 +1217,9 @@
               <select [(ngModel)]="selectedComponentId" name="componentProduct" aria-label="Package product">
                 <option value="">Select an active product</option>
                 @for (product of activeProducts; track product.id) {
-                <option [value]="product.id">{{ product.name }} · {{ product.quality_name }}</option>
+                <option [value]="product.id" [disabled]="product.stock_count === 0">
+                  {{ product.name }} · {{ product.quality_name }} · {{ product.stock_count }} available units
+                </option>
                 }
               </select>
               <button type="button" class="secondary-button" (click)="addPackageComponent()">Add item</button>
@@ -1165,7 +1229,12 @@
               <span>{{ productLabel(component.product_id) }}</span>
               <label
                 >Quantity
-                <input type="number" min="1" max="1000" [(ngModel)]="component.quantity" [name]="'component-' + index"
+                <input
+                  type="number"
+                  min="1"
+                  [max]="availableStock(component.product_id)"
+                  [(ngModel)]="component.quantity"
+                  [name]="'component-' + index"
               /></label>
               <button class="text-button danger" type="button" (click)="removePackageComponent(index)">Remove</button>
             </div>
@@ -1176,9 +1245,40 @@
               A package price covers the package as a whole; included items reserve inventory and are not charged a
               second time.
             </p>
-            <button type="button" (click)="savePackage()" [disabled]="saving">
-              {{ packageId ? 'Save package' : 'Create package' }}
-            </button>
+            @if (packageTemplateSuggestion.length > 0) {
+            <p class="hint">
+              Suggested equipment: {{ packageTemplateSuggestion.join(', ') }}. Select matching equipment from this
+              business’s inventory above.
+            </p>
+            }
+            <aside class="package-preview" aria-live="polite">
+              <p class="eyebrow">PACKAGE PREVIEW</p>
+              @if (packageImagePreviewUrl || packageImageUrl) {
+              <img [src]="packageImagePreviewUrl || packageImageUrl" [alt]="packageName || 'Package cover preview'" />
+              }
+              <h3>{{ packageName || 'Your package name' }}</h3>
+              <span class="count-pill">{{ packageCategory }}</span>
+              <p>{{ packageDescription || 'Add a description to help customers understand this bundle.' }}</p>
+              <strong
+                >{{ packagePrice ? (packagePrice | currency: 'PHP' : 'symbol' : '1.2-2' : 'en-PH') : 'Price to be
+                confirmed' }}</strong
+              >
+              <ul>
+                @for (component of packageComponents; track component.product_id) {
+                <li>{{ component.quantity }} × {{ productLabel(component.product_id) }}</li>
+                } @empty {
+                <li>Select equipment from this business’s inventory.</li>
+                }
+              </ul>
+            </aside>
+            <div class="actions">
+              <button type="button" class="secondary-button" (click)="savePackage(false)" [disabled]="saving">
+                Save as draft
+              </button>
+              <button type="button" (click)="savePackage(true)" [disabled]="saving">
+                {{ packageId ? 'Save and publish' : 'Publish package' }}
+              </button>
+            </div>
           </div>
           }
           <div class="panel" [class.full-width]="!isBusinessAdmin()">

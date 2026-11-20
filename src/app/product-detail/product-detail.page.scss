@@ -125,6 +125,46 @@ main {
   line-height: 1.6;
 }
 
+.specifications-box {
+  margin-top: 16px;
+  padding: 14px 16px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--bg-subtle);
+
+  h2 {
+    margin: 0 0 10px;
+    font-size: 14px;
+  }
+
+  dl {
+    display: grid;
+    gap: 8px;
+    margin: 0;
+  }
+
+  dl > div {
+    display: flex;
+    justify-content: space-between;
+    gap: 12px;
+  }
+
+  dt,
+  dd {
+    margin: 0;
+    font-size: 12.5px;
+  }
+
+  dt {
+    color: var(--text-secondary);
+  }
+
+  dd {
+    color: var(--text-primary);
+    text-align: right;
+  }
+}
+
 .price-box {
   display: grid;
   gap: 6px;

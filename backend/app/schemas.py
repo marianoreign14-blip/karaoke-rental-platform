@@ -1,4 +1,5 @@
 from datetime import datetime, timezone
+import re
 from typing import Annotated, Literal
 
 from pydantic import BaseModel, BeforeValidator, ConfigDict, EmailStr, Field, HttpUrl, StringConstraints, model_validator
@@ -11,6 +12,18 @@ def _blank_to_none(value: object) -> object:
         stripped = value.strip()
         return stripped if stripped else None
     return value
+
+
+def _validated_image_url(value: object) -> object:
+    normalized = _blank_to_none(value)
+    if normalized is None:
+        return None
+    if isinstance(normalized, str) and re.fullmatch(r"/assets/catalog/[a-z0-9-]+\.svg", normalized):
+        return normalized
+    return TypeAdapter(HttpUrl).validate_python(normalized)
+
+
+ImageUrl = Annotated[HttpUrl | str | None, BeforeValidator(_validated_image_url)]
 
 
 def _to_utc(dt: datetime) -> datetime:
@@ -164,19 +177,21 @@ class PricingFields(APIModel):
 class ProductCreate(PricingFields):
     name: trimmed_str(1, 160)
     description: Annotated[str, StringConstraints(strip_whitespace=True, max_length=4000)] = ""
+    specifications: dict[str, str] = Field(default_factory=dict)
     category: trimmed_str(1, 80)
     quality_tier_id: int
     initial_stock: Annotated[int, Field(ge=0, le=1000)] = 0
-    image_url: Annotated[HttpUrl | None, BeforeValidator(_blank_to_none)] = None
+    image_url: ImageUrl = None
     is_active: bool = True
 
 
 class ProductUpdate(PricingFields):
     name: trimmed_str(1, 160)
     description: Annotated[str, StringConstraints(strip_whitespace=True, max_length=4000)] = ""
+    specifications: dict[str, str] | None = None
     category: trimmed_str(1, 80)
     quality_tier_id: int
-    image_url: Annotated[HttpUrl | None, BeforeValidator(_blank_to_none)] = None
+    image_url: ImageUrl = None
     is_active: bool = True
 
 
@@ -187,6 +202,7 @@ class ProductRead(APIModel):
     business_slug: str
     name: str
     description: str
+    specifications: dict[str, str]
     category: str
     quality_tier_id: int
     quality_name: str
@@ -216,17 +232,20 @@ class PackageComponentInput(APIModel):
 
 class PackageInput(APIModel):
     name: trimmed_str(1, 160)
+    category: trimmed_str(1, 80) | None = None
     description: Annotated[str, StringConstraints(strip_whitespace=True, max_length=4000)] = ""
     price_cents: Annotated[int | None, Field(ge=0)] = None
     pricing_basis: str | None = None
     billing_interval_minutes: Annotated[int | None, Field(gt=0, le=525600)] = None
     rounding_rule: str | None = None
-    image_url: Annotated[HttpUrl | None, BeforeValidator(_blank_to_none)] = None
+    image_url: ImageUrl = None
     is_active: bool = True
-    components: Annotated[list[PackageComponentInput], Field(min_length=1, max_length=30)]
+    components: Annotated[list[PackageComponentInput], Field(max_length=30)]
 
     @model_validator(mode="after")
     def validate_pricing(self):
+        if self.is_active and not self.components:
+            raise ValueError("An active package must include equipment from actual business inventory")
         if self.pricing_basis is None:
             if self.billing_interval_minutes is not None or self.rounding_rule is not None:
                 raise ValueError("A pricing basis is required before billing details can be set")
@@ -251,6 +270,7 @@ class PackageInput(APIModel):
 class PackageRead(APIModel):
     id: int
     name: str
+    category: str
     description: str
     price_cents: int | None
     pricing_basis: str | None

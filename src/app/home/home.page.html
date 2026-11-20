@@ -296,7 +296,7 @@
       </div>
       } @else {
       <div class="product-grid">
-        @for (product of products; track product.id) {
+        @for (product of pagedProducts; track product.id) {
         <article class="product-card">
           <div class="product-media">
             @if (product.image_url) {
@@ -326,6 +326,13 @@
             </a>
             }
             <p class="product-desc">{{ product.description || 'A quality rental option for your event.' }}</p>
+            @if (product.specifications && (product.specifications | keyvalue).length > 0) {
+            <ul class="product-specifications">
+              @for (specification of product.specifications | keyvalue; track specification.key) {
+              <li><span>{{ specification.key }}</span><strong>{{ specification.value }}</strong></li>
+              }
+            </ul>
+            }
             <div class="product-bottom">
               <div class="price-col">
                 <strong class="tabular-nums">{{ priceLabel(product.price_cents, product.pricing_configured) }}</strong>
@@ -350,7 +357,27 @@
         </article>
         }
       </div>
-      }
+      @if (productPageCount > 1) {
+      <nav class="catalog-pagination" aria-label="Equipment pages">
+        <button
+          type="button"
+          class="secondary-button"
+          [disabled]="productPage === 1"
+          (click)="setProductPage(productPage - 1)"
+        >
+          Previous
+        </button>
+        <span>Page {{ productPage }} of {{ productPageCount }}</span>
+        <button
+          type="button"
+          class="secondary-button"
+          [disabled]="productPage === productPageCount"
+          (click)="setProductPage(productPage + 1)"
+        >
+          Next
+        </button>
+      </nav>
+      } }
     </section>
 
     <section class="catalog-section packages" aria-labelledby="packages-title">
@@ -359,6 +386,18 @@
           <p class="eyebrow">READY-MADE BUNDLES</p>
           <h2 id="packages-title">Rental packages</h2>
         </div>
+        <div class="filters package-filters">
+          <label>
+            <span class="visually-hidden">Filter package category</span>
+            <select aria-label="Filter package category" [(ngModel)]="packageCategory">
+              <option value="">All package categories</option>
+              @for (item of packageCategories; track item) {
+              <option [value]="item">{{ item }}</option>
+              }
+            </select>
+          </label>
+          <ion-button fill="outline" (click)="loadCatalog()">Apply</ion-button>
+        </div>
       </div>
       @if (packages.length === 0) {
       <div class="empty-state compact">
@@ -366,7 +405,7 @@
       </div>
       } @else {
       <div class="package-list">
-        @for (rentalPackage of packages; track rentalPackage.id) {
+        @for (rentalPackage of pagedPackages; track rentalPackage.id) {
         <article class="package-card">
           <div class="package-media">
             @if (rentalPackage.image_url) {
@@ -380,6 +419,7 @@
           <div class="package-info">
             <div class="package-head-meta">
               <app-status-badge value="package" label="Rental package" [showDot]="false"></app-status-badge>
+              <app-status-badge value="neutral" [label]="rentalPackage.category" [showDot]="false"></app-status-badge>
               @if (!selectedBusiness) {
               <a class="item-business-link inline" [routerLink]="['/business', rentalPackage.business_slug]">
                 <app-icon name="store" [size]="13"></app-icon>
@@ -421,7 +461,27 @@
         </article>
         }
       </div>
-      }
+      @if (packagePageCount > 1) {
+      <nav class="catalog-pagination" aria-label="Rental package pages">
+        <button
+          type="button"
+          class="secondary-button"
+          [disabled]="packagePage === 1"
+          (click)="setPackagePage(packagePage - 1)"
+        >
+          Previous
+        </button>
+        <span>Page {{ packagePage }} of {{ packagePageCount }}</span>
+        <button
+          type="button"
+          class="secondary-button"
+          [disabled]="packagePage === packagePageCount"
+          (click)="setPackagePage(packagePage + 1)"
+        >
+          Next
+        </button>
+      </nav>
+      } }
     </section>
 
     <section id="rental-request" class="request-panel" aria-labelledby="request-title">
