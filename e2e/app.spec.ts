@@ -55,6 +55,9 @@ test('opens account page and rejects unauthenticated admin access', async ({ pag
   await page.goto('/account');
   await expect(page.getByRole('heading', { name: 'Sign in to your account' })).toBeVisible();
   await expect(page.locator('body')).toHaveCSS('background-color', 'rgb(255, 255, 255)');
+  await expect(page.locator('main.auth-layout')).toHaveCSS('background-color', 'rgba(0, 0, 0, 0)');
+  await expect(page.locator('main.auth-layout')).toHaveCSS('box-shadow', 'none');
+  await expect(page.locator('.auth-panel')).toBeVisible();
   for (const width of [1024, 412, 375]) {
     await page.setViewportSize({ width, height: 768 });
     const alignment = await page.evaluate(() => {
