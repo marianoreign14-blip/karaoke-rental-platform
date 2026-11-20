@@ -7,7 +7,7 @@
   align-items: center;
   padding: clamp(24px, 4vw, 38px);
   border: 1px solid var(--border);
-  border-radius: var(--radius-xl);
+  border-radius: 0;
   background: var(--bg-surface);
   box-shadow: var(--shadow-sm);
 
@@ -98,7 +98,7 @@
   padding: clamp(20px, 3vw, 28px);
   border: 1px solid var(--border);
   border-top: 4px solid var(--accent);
-  border-radius: var(--radius-xl);
+  border-radius: 0;
   background: var(--bg-surface);
   box-shadow: var(--shadow-sm);
 }

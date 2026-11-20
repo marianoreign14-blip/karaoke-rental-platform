@@ -58,7 +58,7 @@ main {
   gap: 32px;
   padding: clamp(20px, 3vw, 28px);
   border: 1px solid var(--border);
-  border-radius: var(--radius-xl);
+  border-radius: 0;
   background: var(--bg-surface);
   box-shadow: var(--shadow-sm);
 }

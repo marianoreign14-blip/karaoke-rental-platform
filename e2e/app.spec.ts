@@ -16,20 +16,28 @@ test('visits the app root url', async ({ page }) => {
     name: 'Marketplace',
   });
   const expectContentGutters = async () => {
-    const gutters = await page.evaluate(() => {
+    const measurements = await page.evaluate(() => {
       const main = document.querySelector('main')!.getBoundingClientRect();
       const hero = document.querySelector('.hero-surface')!.getBoundingClientRect();
       const availability = document.querySelector('.rental-window')!.getBoundingClientRect();
-      return [
-        hero.left - main.left,
-        main.right - hero.right,
-        availability.left - main.left,
-        main.right - availability.right,
-      ];
+      return {
+        gutters: [
+          hero.left - main.left,
+          main.right - hero.right,
+          availability.left - main.left,
+          main.right - availability.right,
+        ],
+        mainRadii: [...document.querySelectorAll('main')].map((element) => getComputedStyle(element).borderRadius),
+        heroRadius: getComputedStyle(document.querySelector('.hero-surface')!).borderRadius,
+        availabilityRadius: getComputedStyle(document.querySelector('.rental-window')!).borderRadius,
+      };
     });
-    for (const gutter of gutters) {
+    for (const gutter of measurements.gutters) {
       expect(gutter).toBeGreaterThanOrEqual(10);
     }
+    expect(measurements.mainRadii.every((radius) => radius === '0px')).toBe(true);
+    expect(measurements.heroRadius).toBe('0px');
+    expect(Number.parseFloat(measurements.availabilityRadius)).toBeGreaterThan(0);
   };
   for (const width of [1440, 1280]) {
     await page.setViewportSize({ width, height: 900 });
@@ -68,10 +76,18 @@ test('opens account page and rejects unauthenticated admin access', async ({ pag
       }
       const mainRect = main.getBoundingClientRect();
       const panelRect = panel.getBoundingClientRect();
-      return Math.abs(mainRect.top + mainRect.height / 2 - (panelRect.top + panelRect.height / 2));
+      return {
+        centerOffset: Math.abs(mainRect.top + mainRect.height / 2 - (panelRect.top + panelRect.height / 2)),
+        mainRadius: getComputedStyle(main).borderRadius,
+        panelRadius: getComputedStyle(panel).borderRadius,
+        inputRadius: getComputedStyle(panel.querySelector('input')!).borderRadius,
+      };
     });
     expect(alignment).not.toBeNull();
-    expect(alignment).toBeLessThan(2);
+    expect(alignment!.centerOffset).toBeLessThan(2);
+    expect(alignment!.mainRadius).toBe('0px');
+    expect(alignment!.panelRadius).toBe('0px');
+    expect(alignment!.inputRadius).not.toBe('0px');
     expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(width);
   }
   await page.setViewportSize({ width: 1024, height: 768 });
@@ -96,6 +112,27 @@ test('opens account page and rejects unauthenticated admin access', async ({ pag
 
   await page.goto('/admin');
   await expect(page).toHaveURL(/\/account$/);
+});
+
+test('keeps registration and recovery page surfaces square at responsive widths', async ({ page }) => {
+  const surfaces = [
+    { path: '/business-register', selector: '.registration-panel' },
+    { path: '/forgot-password', selector: '.panel' },
+    { path: '/reset-password', selector: '.panel' },
+  ];
+
+  for (const { path, selector } of surfaces) {
+    await page.goto(path);
+    const surface = page.locator(selector);
+    await expect(surface).toBeVisible();
+    for (const width of [1440, 1280, 768, 412, 375]) {
+      await page.setViewportSize({ width, height: 900 });
+      await expect(page.locator('main').last()).toHaveCSS('border-radius', '0px');
+      await expect(surface).toHaveCSS('border-radius', '0px');
+      await expect(surface.locator('input').first()).not.toHaveCSS('border-radius', '0px');
+      expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(width);
+    }
+  }
 });
 
 test('explains invalid rental date ranges', async ({ page }) => {

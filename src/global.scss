@@ -54,7 +54,7 @@ ion-toolbar {
 
 main {
   border: 1px solid rgba(255, 255, 255, 0.72);
-  border-radius: 28px;
+  border-radius: 0;
   background: var(--bg-surface);
   box-shadow: var(--shadow-md);
 }
@@ -716,7 +716,7 @@ app-responsive-menu {
   margin: 20px auto;
   overflow: hidden;
   border: 1px solid rgba(255, 255, 255, 0.76);
-  border-radius: 28px;
+  border-radius: 0;
   background: var(--bg-surface);
   box-shadow: var(--shadow-lg);
   transition: grid-template-columns var(--transition-fast);
