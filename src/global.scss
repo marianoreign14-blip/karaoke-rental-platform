@@ -26,7 +26,7 @@ html,
 body,
 ion-app,
 ion-content {
-  background: var(--bg-canvas);
+  background: var(--app-background);
   color: var(--text-primary);
   font-family: var(--font-sans);
   -webkit-font-smoothing: antialiased;
@@ -34,7 +34,7 @@ ion-content {
 }
 
 ion-content {
-  --background: var(--bg-canvas);
+  --background: var(--app-background);
   --color: var(--text-primary);
 }
 
@@ -52,8 +52,15 @@ ion-toolbar {
   --color: var(--text-primary);
 }
 
+main {
+  border: 1px solid rgba(255, 255, 255, 0.72);
+  border-radius: 28px;
+  background: var(--bg-surface);
+  box-shadow: var(--shadow-md);
+}
+
 ion-button {
-  --border-radius: var(--radius-md);
+  --border-radius: var(--radius-button);
   --box-shadow: none;
   --padding-start: 16px;
   --padding-end: 16px;
@@ -237,6 +244,14 @@ a {
   }
 }
 
+app-responsive-menu {
+  display: contents;
+}
+
+.responsive-menu-toggle {
+  display: none;
+}
+
 .unread-pill {
   display: inline-flex;
   align-items: center;
@@ -262,7 +277,7 @@ a {
   gap: 8px;
   min-height: var(--control-h);
   padding: 0 16px;
-  border-radius: var(--radius-md);
+  border-radius: var(--radius-button);
   font: inherit;
   font-size: 13.5px;
   font-weight: 600;
@@ -697,7 +712,13 @@ a {
   display: grid;
   grid-template-columns: var(--sidebar-w) minmax(0, 1fr);
   min-height: 100%;
-  background: var(--bg-canvas);
+  width: min(1600px, calc(100% - 40px));
+  margin: 20px auto;
+  overflow: hidden;
+  border: 1px solid rgba(255, 255, 255, 0.76);
+  border-radius: 28px;
+  background: var(--bg-surface);
+  box-shadow: var(--shadow-lg);
   transition: grid-template-columns var(--transition-fast);
 
   &.sidebar-collapsed {
@@ -710,7 +731,7 @@ a {
   top: 0;
   display: flex;
   flex-direction: column;
-  height: 100vh;
+  height: calc(100vh - 40px);
   max-height: 100%;
   border-right: 1px solid var(--border);
   background: var(--bg-surface);
@@ -1080,7 +1101,7 @@ a {
   gap: 7px;
   min-height: var(--control-h-sm);
   padding: 0 14px;
-  border-radius: var(--radius-md);
+  border-radius: var(--radius-button);
   font: inherit;
   font-size: 13px;
   font-weight: 600;
@@ -1459,11 +1480,93 @@ select[aria-invalid='true'] {
   }
 }
 
+@media (max-width: 768px) {
+  app-responsive-menu {
+    position: relative;
+    display: block;
+    z-index: 40;
+  }
+
+  .responsive-menu-toggle {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 7px;
+    min-height: 40px;
+    padding: 0 12px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-button);
+    background: var(--bg-surface);
+    color: var(--text-primary);
+    font: inherit;
+    font-size: 13px;
+    font-weight: 600;
+    cursor: pointer;
+    transition:
+      border-color var(--transition-fast),
+      background var(--transition-fast),
+      color var(--transition-fast);
+
+    &:hover {
+      border-color: var(--accent-border);
+      background: var(--accent-soft);
+      color: var(--accent);
+    }
+  }
+
+  app-responsive-menu:not(.menu-open) > nav:not(.breadcrumb) {
+    display: none;
+  }
+
+  app-responsive-menu.menu-open > nav:not(.breadcrumb) {
+    position: absolute;
+    top: calc(100% + 8px);
+    right: 0;
+    z-index: 100;
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
+    gap: 4px;
+    width: max-content;
+    min-width: min(240px, calc(100vw - 32px));
+    max-height: min(70vh, 480px);
+    margin: 0;
+    padding: 8px;
+    overflow: auto;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    background: var(--bg-surface);
+    box-shadow: var(--shadow-lg);
+  }
+
+  app-responsive-menu.menu-open > nav:not(.breadcrumb) a,
+  app-responsive-menu.menu-open > nav:not(.breadcrumb) button {
+    justify-content: flex-start;
+    min-height: 42px;
+    padding: 8px 12px;
+    border-radius: var(--radius-pill);
+    text-align: left;
+  }
+}
+
+@media (max-width: 420px) {
+  .responsive-menu-toggle {
+    width: 40px;
+    padding: 0;
+  }
+
+  .responsive-menu-toggle span {
+    display: none;
+  }
+}
+
 /* Responsive Dashboard Sidebar -> Slide-Over Drawer below 1024px */
 @media (max-width: 1024px) {
   .saas-shell,
   .saas-shell.sidebar-collapsed {
     grid-template-columns: minmax(0, 1fr);
+    width: calc(100% - 24px);
+    margin: 12px auto;
   }
 
   .saas-mobile-bar {
@@ -1477,6 +1580,7 @@ select[aria-invalid='true'] {
     bottom: 0;
     width: min(280px, 84vw);
     height: 100vh;
+    max-height: 100vh;
     transform: translateX(-100%);
     box-shadow: var(--shadow-lg);
     transition: transform 200ms cubic-bezier(0.16, 1, 0.3, 1);

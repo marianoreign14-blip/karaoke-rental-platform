@@ -7,6 +7,7 @@ import { firstValueFrom } from 'rxjs';
 
 import { ApiService, extractApiError } from '../core/api.service';
 import { BrandMarkComponent } from '../shared/brand-mark.component';
+import { ResponsiveMenuComponent } from '../shared/responsive-menu.component';
 import { ToastService } from '../shared/toast.service';
 
 @Component({
@@ -14,7 +15,7 @@ import { ToastService } from '../shared/toast.service';
   templateUrl: './forgot-password.page.html',
   styleUrls: ['./forgot-password.page.scss'],
   standalone: true,
-  imports: [CommonModule, FormsModule, RouterLink, IonContent, IonHeader, BrandMarkComponent],
+  imports: [CommonModule, FormsModule, RouterLink, IonContent, IonHeader, BrandMarkComponent, ResponsiveMenuComponent],
 })
 export class ForgotPasswordPage {
   private readonly api = inject(ApiService);

@@ -3,15 +3,17 @@
     <a class="brand" routerLink="/home" aria-label="KARAOKE home">
       <app-brand-mark></app-brand-mark>
     </a>
-    <nav>
-      <a routerLink="/home">Marketplace</a>
-      <a routerLink="/account">My account</a>
-      <button type="button" class="cart-nav-btn" (click)="goToCheckout()">
-        <app-icon name="shopping-bag" [size]="15"></app-icon>
-        <span>Request</span>
-        <ion-badge>{{ cartCount() }}</ion-badge>
-      </button>
-    </nav>
+    <app-responsive-menu>
+      <nav>
+        <a routerLink="/home">Marketplace</a>
+        <a routerLink="/account">My account</a>
+        <button type="button" class="cart-nav-btn" (click)="goToCheckout()">
+          <app-icon name="shopping-bag" [size]="15"></app-icon>
+          <span>Request</span>
+          <ion-badge>{{ cartCount() }}</ion-badge>
+        </button>
+      </nav>
+    </app-responsive-menu>
   </header>
 </ion-header>
 

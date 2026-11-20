@@ -14,6 +14,7 @@ import { ConfirmDialogService } from '../shared/confirm-dialog.service';
 import { IconComponent } from '../shared/icon.component';
 import { OrderProgressComponent } from '../shared/order-progress.component';
 import { PaymentInstructionsComponent } from '../shared/payment-instructions.component';
+import { ResponsiveMenuComponent } from '../shared/responsive-menu.component';
 import { StatusBadgeComponent } from '../shared/status-badge.component';
 import { ToastService } from '../shared/toast.service';
 
@@ -35,6 +36,7 @@ import { ToastService } from '../shared/toast.service';
     IconComponent,
     OrderProgressComponent,
     PaymentInstructionsComponent,
+    ResponsiveMenuComponent,
     StatusBadgeComponent,
   ],
 })

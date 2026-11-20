@@ -24,6 +24,7 @@ import { BrandMarkComponent } from '../shared/brand-mark.component';
 import { ConfirmDialogService } from '../shared/confirm-dialog.service';
 import { formatRentalDuration } from '../shared/format-duration';
 import { IconComponent } from '../shared/icon.component';
+import { ResponsiveMenuComponent } from '../shared/responsive-menu.component';
 import { StatusBadgeComponent } from '../shared/status-badge.component';
 import { ToastService } from '../shared/toast.service';
 
@@ -48,6 +49,7 @@ import { ToastService } from '../shared/toast.service';
     IonToolbar,
     BrandMarkComponent,
     IconComponent,
+    ResponsiveMenuComponent,
     StatusBadgeComponent,
   ],
 })

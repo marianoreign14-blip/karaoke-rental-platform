@@ -5,6 +5,26 @@ test('visits the app root url', async ({ page }) => {
   await expect(page.getByRole('heading', { name: 'Find a karaoke rental business' })).toBeVisible();
   await expect(page.getByRole('heading', { name: 'Make room for a good gathering.' })).toBeVisible();
   await expect(page.getByRole('heading', { name: 'Browse rental equipment' })).toBeVisible();
+
+  const menu = page.locator('.responsive-menu-toggle');
+  const marketplaceLink = page.getByRole('navigation', { name: 'Main navigation' }).getByRole('link', {
+    name: 'Marketplace',
+  });
+  for (const width of [1440, 1280]) {
+    await page.setViewportSize({ width, height: 900 });
+    await expect(menu).toBeHidden();
+    await expect(marketplaceLink).toBeVisible();
+  }
+  for (const width of [768, 412, 375]) {
+    await page.setViewportSize({ width, height: 900 });
+    await expect(menu).toBeVisible();
+    await expect(marketplaceLink).toBeHidden();
+    expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(width);
+  }
+  await expect(menu).toBeVisible();
+  await expect(marketplaceLink).toBeHidden();
+  await menu.click();
+  await expect(marketplaceLink).toBeVisible();
 });
 
 test('opens account page and rejects unauthenticated admin access', async ({ page }) => {
@@ -39,7 +59,7 @@ test('explains invalid rental date ranges', async ({ page }) => {
   await page.getByLabel('Rental starts').fill('2026-12-10T14:00');
   await page.getByLabel('Rental ends').fill('2026-12-10T13:00');
 
-  await expect(page.getByRole('alert')).toHaveText('End date and time must be after the start.');
+  await expect(page.locator('#rental-window-error')).toHaveText('End date and time must be after the start.');
   await expect(page.getByLabel('Rental ends')).toHaveAttribute('aria-invalid', 'true');
 });
 

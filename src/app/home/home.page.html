@@ -5,22 +5,24 @@
         <app-brand-mark subtitle="Rental Marketplace"></app-brand-mark>
       </a>
 
-      <nav class="top-nav" aria-label="Main navigation">
-        <a routerLink="/home" routerLinkActive="active" [routerLinkActiveOptions]="{ exact: true }">Marketplace</a>
-        <a routerLink="/account" routerLinkActive="active">
-          {{ user() ? 'My account & orders' : 'Sign in' }} @if (unreadNotifications > 0) {
-          <span class="unread-pill" [attr.aria-label]="unreadNotifications + ' unread notifications'"
-            >{{ unreadNotifications }}</span
-          >
+      <app-responsive-menu>
+        <nav class="top-nav" aria-label="Main navigation">
+          <a routerLink="/home" routerLinkActive="active" [routerLinkActiveOptions]="{ exact: true }">Marketplace</a>
+          <a routerLink="/account" routerLinkActive="active">
+            {{ user() ? 'My account & orders' : 'Sign in' }} @if (unreadNotifications > 0) {
+            <span class="unread-pill" [attr.aria-label]="unreadNotifications + ' unread notifications'"
+              >{{ unreadNotifications }}</span
+            >
+            }
+          </a>
+          @if (user()?.role === 'business_admin' || user()?.role === 'business_staff') {
+          <a routerLink="/admin" routerLinkActive="active">Business admin</a>
+          } @if (user()?.role === 'platform_admin') {
+          <a routerLink="/platform" routerLinkActive="active">Platform admin</a>
           }
-        </a>
-        @if (user()?.role === 'business_admin' || user()?.role === 'business_staff') {
-        <a routerLink="/admin" routerLinkActive="active">Business admin</a>
-        } @if (user()?.role === 'platform_admin') {
-        <a routerLink="/platform" routerLinkActive="active">Platform admin</a>
-        }
-        <a routerLink="/business-register" routerLinkActive="active">List your business</a>
-      </nav>
+          <a routerLink="/business-register" routerLinkActive="active">List your business</a>
+        </nav>
+      </app-responsive-menu>
 
       <div class="nav-right">
         <a class="cart-link" href="#rental-request" (click)="scrollToRequest($event)">
