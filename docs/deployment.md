@@ -40,14 +40,18 @@ deploy the Blueprint from `render.yaml`. Provide the requested secret values:
 - `SECRET_KEY`: a unique cryptographically random value of at least 32
   characters. Generate one with `python -c "import secrets; print(secrets.token_urlsafe(48))"`.
 
-The Blueprint runs `alembic upgrade head` before starting the API, using the
-direct migration URL. On a new Neon database, this creates the schema and the
-five initial demonstration businesses.
+This Blueprint is configured for a **test deployment**: the API uses Render's
+Free plan, and its start command runs `alembic upgrade head` with the direct
+migration URL before starting Uvicorn. On a new Neon database, this creates the
+schema and the five initial demonstration businesses. The Free API spins down
+after 15 minutes without traffic, and its next request can take about a minute
+to start. Free services are not suitable for production. The API is configured
+for Singapore to match the selected Neon region.
 
-The API service uses a paid Render compute plan because Render only supports
-pre-deploy commands on paid web services. Review Render's current pricing before
-deploying. Neon and Render charges depend on account plans and usage.
-The API is configured for Singapore to match the selected Neon region.
+Render only supports `preDeployCommand` on paid web services. For production,
+use a paid API plan and move the migration command back to `preDeployCommand`
+so migrations run before deployment rather than at every service start. Review
+Render's current pricing before upgrading.
 
 ## 4. Verify the deployment
 
@@ -58,11 +62,13 @@ After both services deploy:
    `{"status":"ok"}`.
 3. Confirm the marketplace loads and that business registration and sign-in
    requests reach the API.
-4. Open the API service's Shell in Render and run
+4. On a paid API plan, open the API service's Shell in Render and run
    `PYTHONPATH=backend python -m app.cli create-admin --email admin@example.com --name "Platform Administrator"`.
    The command securely prompts for the password twice. Use your intended
    administrator email and name; do not put administrator credentials in the
-   Blueprint or source control.
+   Blueprint or source control. Render Free services do not provide Shell
+   access; for a Free test deployment, run the command in an authorized local
+   environment with `DATABASE_URL` set to the same Neon database.
 
 The Blueprint's frontend proxy and API CORS setting assume the default Render
 service hostnames shown above. If Render assigns different hostnames (for
@@ -78,10 +84,10 @@ match.
 - Neon Free is limited to 100 CU-hours and 1 GB per project. It is intended for
   testing, not reliable production. A continuously active 0.25-CU compute uses
   the monthly allowance in about 400 hours; real usage depends on traffic.
-- Migrations are automated before each API deployment. Test schema changes on
-  a non-production Neon branch before applying them to production.
+- The Free test service applies pending migrations at startup. Test schema
+  changes on a non-production Neon branch before applying them to production;
+  use the paid pre-deploy workflow for production.
 - Product, package, storefront, and payment-proof images are stored in the
   PostgreSQL database; the service does not depend on local persistent files.
-- The project has no Git remote configured yet. Creating the GitHub repository,
-  connecting accounts, supplying secrets, and deploying the Blueprint remain
-  account-owner steps.
+- The repository is pushed to GitHub. Keep secrets in Render's environment
+  settings, not in this repository.
