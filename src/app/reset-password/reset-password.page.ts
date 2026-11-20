@@ -7,18 +7,21 @@ import { IonContent, IonHeader } from '@ionic/angular';
 import { firstValueFrom } from 'rxjs';
 
 import { ApiService, extractApiError } from '../core/api.service';
+import { BrandMarkComponent } from '../shared/brand-mark.component';
+import { ToastService } from '../shared/toast.service';
 
 @Component({
   selector: 'app-reset-password',
   templateUrl: './reset-password.page.html',
   styleUrls: ['./reset-password.page.scss'],
   standalone: true,
-  imports: [CommonModule, FormsModule, RouterLink, IonContent, IonHeader],
+  imports: [CommonModule, FormsModule, RouterLink, IonContent, IonHeader, BrandMarkComponent],
 })
 export class ResetPasswordPage implements OnInit {
   private readonly api = inject(ApiService);
   private readonly route = inject(ActivatedRoute);
   private readonly changeDetector = inject(ChangeDetectorRef);
+  private readonly toast = inject(ToastService);
 
   token = '';
   newPassword = '';
@@ -28,6 +31,7 @@ export class ResetPasswordPage implements OnInit {
   completed = false;
   error = '';
   notice = '';
+  fieldErrors: Record<string, string> = {};
 
   ngOnInit(): void {
     const queryToken = this.route.snapshot.queryParamMap.get('token');
@@ -39,23 +43,26 @@ export class ResetPasswordPage implements OnInit {
   async submit(): Promise<void> {
     this.error = '';
     this.notice = '';
+    this.fieldErrors = {};
     const token = this.token.trim();
     if (token.length < 16) {
-      this.error = 'Enter a valid password reset token.';
-      return;
+      this.fieldErrors['token'] = 'Enter a valid password reset token.';
     }
     if (this.newPassword.length < 12) {
-      this.error = 'New password must be at least 12 characters.';
-      return;
+      this.fieldErrors['newPassword'] = 'New password must be at least 12 characters.';
     }
     if (this.newPassword !== this.confirmPassword) {
-      this.error = 'Password confirmation does not match.';
+      this.fieldErrors['confirmPassword'] = 'Password confirmation does not match.';
+    }
+    if (Object.keys(this.fieldErrors).length > 0) {
+      this.error = Object.values(this.fieldErrors)[0];
       return;
     }
     this.saving = true;
     try {
       const response = await firstValueFrom(this.api.resetPassword(token, this.newPassword));
       this.notice = response.message;
+      this.toast.success('Password reset complete. You can now sign in.');
       this.completed = true;
       this.token = '';
       this.newPassword = '';

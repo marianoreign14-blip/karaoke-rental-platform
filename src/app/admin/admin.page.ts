@@ -3,7 +3,7 @@ import { ChangeDetectorRef, Component, inject, ViewChild } from '@angular/core';
 import type { ElementRef, OnDestroy, OnInit } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { Router, RouterLink } from '@angular/router';
-import { IonContent, IonHeader } from '@ionic/angular';
+import { IonContent } from '@ionic/angular';
 import type { Observable } from 'rxjs';
 import { firstValueFrom } from 'rxjs';
 
@@ -27,6 +27,12 @@ import type {
   RentalPackage,
   ReportSummary,
 } from '../core/api.service';
+import { BrandMarkComponent } from '../shared/brand-mark.component';
+import { ConfirmDialogService } from '../shared/confirm-dialog.service';
+import { IconComponent } from '../shared/icon.component';
+import type { IconName } from '../shared/icon.component';
+import { StatusBadgeComponent } from '../shared/status-badge.component';
+import { ToastService } from '../shared/toast.service';
 
 type AdminSection =
   | 'orders'
@@ -50,12 +56,25 @@ type PackageDraft = { product_id: number; quantity: number };
   templateUrl: './admin.page.html',
   styleUrls: ['./admin.page.scss'],
   standalone: true,
-  imports: [CommonModule, CurrencyPipe, DatePipe, FormsModule, RouterLink, IonContent, IonHeader],
+  imports: [
+    CommonModule,
+    CurrencyPipe,
+    DatePipe,
+    FormsModule,
+    RouterLink,
+    IonContent,
+    BrandMarkComponent,
+    IconComponent,
+    StatusBadgeComponent,
+  ],
 })
 export class AdminPage implements OnInit, OnDestroy {
   private readonly api = inject(ApiService);
   private readonly router = inject(Router);
   private readonly changeDetector = inject(ChangeDetectorRef);
+  private readonly confirmDialog = inject(ConfirmDialogService);
+  private readonly toast = inject(ToastService);
+  fieldErrors: Record<string, string> = {};
   @ViewChild('productNameInput') private productNameInput?: ElementRef<HTMLInputElement>;
   @ViewChild('productImageInput') private productImageInput?: ElementRef<HTMLInputElement>;
   @ViewChild('packageImageInput') private packageImageInput?: ElementRef<HTMLInputElement>;
@@ -64,22 +83,32 @@ export class AdminPage implements OnInit, OnDestroy {
 
   readonly currentUser = this.api.user;
   readonly isBusinessAdmin = this.api.isBusinessAdmin;
-  readonly sections: { id: AdminSection; label: string }[] = [
-    { id: 'orders', label: 'Orders & payments' },
-    { id: 'transactions', label: 'Transactions' },
-    { id: 'calendar', label: 'Booking calendar' },
-    { id: 'products', label: 'Products' },
-    { id: 'classifications', label: 'Classifications' },
-    { id: 'packages', label: 'Packages' },
-    { id: 'inventory', label: 'Inventory' },
-    { id: 'customers', label: 'Customers' },
-    { id: 'reports', label: 'Reports' },
-    { id: 'notifications', label: 'Notifications' },
-    { id: 'settings', label: 'Business settings' },
-    { id: 'staff', label: 'Staff' },
-    { id: 'profile', label: 'My profile' },
+  readonly sections: { id: AdminSection; label: string; icon: IconName }[] = [
+    { id: 'orders', label: 'Orders & payments', icon: 'shopping-bag' },
+    { id: 'transactions', label: 'Transactions', icon: 'credit-card' },
+    { id: 'calendar', label: 'Booking calendar', icon: 'calendar' },
+    { id: 'products', label: 'Products', icon: 'layers' },
+    { id: 'classifications', label: 'Classifications', icon: 'tag' },
+    { id: 'packages', label: 'Packages', icon: 'package' },
+    { id: 'inventory', label: 'Inventory', icon: 'building' },
+    { id: 'customers', label: 'Customers', icon: 'users' },
+    { id: 'reports', label: 'Reports', icon: 'bar-chart' },
+    { id: 'notifications', label: 'Notifications', icon: 'bell' },
+    { id: 'settings', label: 'Business settings', icon: 'settings' },
+    { id: 'staff', label: 'Staff', icon: 'shield' },
+    { id: 'profile', label: 'My profile', icon: 'user' },
   ];
   section: AdminSection = 'orders';
+  sidebarCollapsed = false;
+  mobileMenuOpen = false;
+  readonly pageSize = 25;
+  productSortBy: 'name' | 'price' | 'stock' = 'name';
+  productSortAsc = true;
+  productPage = 1;
+  assetSortBy: 'tag' | 'product' | 'condition' = 'tag';
+  assetSortAsc = true;
+  assetPage = 1;
+  customerPage = 1;
   orders: RentalOrder[] = [];
   orderSearch = '';
   orderStatusFilter: 'all' | RentalOrder['status'] = 'all';
@@ -194,16 +223,71 @@ export class AdminPage implements OnInit, OnDestroy {
   manualPaymentNotes = '';
   paymentProofPreviews: Record<number, string> = {};
 
-  get visibleSections(): { id: AdminSection; label: string }[] {
+  get visibleSections(): { id: AdminSection; label: string; icon: IconName }[] {
     return this.sections.filter((item) => (item.id !== 'settings' && item.id !== 'staff') || this.isBusinessAdmin());
+  }
+
+  get activeSectionLabel(): string {
+    return this.sections.find((item) => item.id === this.section)?.label || 'Administration';
+  }
+
+  selectSection(id: AdminSection): void {
+    this.section = id;
+    this.mobileMenuOpen = false;
+  }
+
+  toggleProductSort(field: 'name' | 'price' | 'stock'): void {
+    if (this.productSortBy === field) {
+      this.productSortAsc = !this.productSortAsc;
+    } else {
+      this.productSortBy = field;
+      this.productSortAsc = true;
+    }
+    this.productPage = 1;
+  }
+
+  toggleAssetSort(field: 'tag' | 'product' | 'condition'): void {
+    if (this.assetSortBy === field) {
+      this.assetSortAsc = !this.assetSortAsc;
+    } else {
+      this.assetSortBy = field;
+      this.assetSortAsc = true;
+    }
+    this.assetPage = 1;
   }
 
   get activeOrderCount(): number {
     return this.orders.filter((order) => order.status === 'pending_admin' || order.status === 'confirmed').length;
   }
 
+  get pendingOrdersCount(): number {
+    return this.orders.filter((order) => order.status === 'pending_admin').length;
+  }
+
   get pendingPaymentCount(): number {
     return this.paymentsLedger.filter((entry) => entry.status === 'submitted').length;
+  }
+
+  get needsAttentionCount(): number {
+    return this.pendingOrdersCount + this.pendingPaymentCount + this.requests.length;
+  }
+
+  orderStatusCount(status: 'all' | RentalOrder['status']): number {
+    if (status === 'all') {
+      return this.orders.length;
+    }
+    return this.orders.filter((order) => order.status === status).length;
+  }
+
+  jumpToPendingOrders(): void {
+    this.selectSection('orders');
+    this.orderStatusFilter = 'pending_admin';
+  }
+
+  jumpToPendingPayments(): void {
+    this.selectSection('transactions');
+    this.paymentStatusFilter = 'submitted';
+    void this.loadPayments();
   }
 
   get activeProducts(): Product[] {
@@ -225,7 +309,7 @@ export class AdminPage implements OnInit, OnDestroy {
 
   get filteredProducts(): Product[] {
     const term = this.productSearch.trim().toLowerCase();
-    return this.products.filter((product) => {
+    const list = this.products.filter((product) => {
       const matchesSearch =
         !term ||
         [product.name, product.category, product.quality_name].some((value) => value.toLowerCase().includes(term));
@@ -234,11 +318,26 @@ export class AdminPage implements OnInit, OnDestroy {
         (this.productStatusFilter === 'active' ? product.is_active : !product.is_active);
       return matchesSearch && matchesStatus;
     });
+    const dir = this.productSortAsc ? 1 : -1;
+    return [...list].sort((a, b) => {
+      if (this.productSortBy === 'price') return (a.price_cents - b.price_cents) * dir;
+      if (this.productSortBy === 'stock') return (a.stock_count - b.stock_count) * dir;
+      return a.name.localeCompare(b.name) * dir;
+    });
+  }
+
+  get pagedProducts(): Product[] {
+    const start = (this.productPage - 1) * this.pageSize;
+    return this.filteredProducts.slice(start, start + this.pageSize);
+  }
+
+  get productTotalPages(): number {
+    return Math.max(1, Math.ceil(this.filteredProducts.length / this.pageSize));
   }
 
   get filteredAssets(): InventoryAsset[] {
     const term = this.assetSearch.trim().toLowerCase();
-    return this.assets.filter((asset) => {
+    const list = this.assets.filter((asset) => {
       const matchesCondition = this.assetConditionFilter === 'all' || asset.condition === this.assetConditionFilter;
       const matchesSearch =
         !term ||
@@ -247,6 +346,21 @@ export class AdminPage implements OnInit, OnDestroy {
         asset.category.toLowerCase().includes(term);
       return matchesCondition && matchesSearch;
     });
+    const dir = this.assetSortAsc ? 1 : -1;
+    return [...list].sort((a, b) => {
+      if (this.assetSortBy === 'product') return a.product_name.localeCompare(b.product_name) * dir;
+      if (this.assetSortBy === 'condition') return a.condition.localeCompare(b.condition) * dir;
+      return a.asset_tag.localeCompare(b.asset_tag) * dir;
+    });
+  }
+
+  get pagedAssets(): InventoryAsset[] {
+    const start = (this.assetPage - 1) * this.pageSize;
+    return this.filteredAssets.slice(start, start + this.pageSize);
+  }
+
+  get assetTotalPages(): number {
+    return Math.max(1, Math.ceil(this.filteredAssets.length / this.pageSize));
   }
 
   get filteredCustomers(): Customer[] {
@@ -260,6 +374,15 @@ export class AdminPage implements OnInit, OnDestroy {
     );
   }
 
+  get pagedCustomers(): Customer[] {
+    const start = (this.customerPage - 1) * this.pageSize;
+    return this.filteredCustomers.slice(start, start + this.pageSize);
+  }
+
+  get customerTotalPages(): number {
+    return Math.max(1, Math.ceil(this.filteredCustomers.length / this.pageSize));
+  }
+
   ngOnInit(): void {
     const signedIn = this.api.user();
     if (signedIn?.role !== 'business_admin' && signedIn?.role !== 'business_staff') {
@@ -268,6 +391,7 @@ export class AdminPage implements OnInit, OnDestroy {
     }
     this.myProfileName = signedIn.display_name;
     this.myProfilePhone = signedIn.phone || '';
+    this.startAutoRefresh();
     void this.refresh();
   }
 
@@ -276,13 +400,52 @@ export class AdminPage implements OnInit, OnDestroy {
     if (signedIn?.role === 'business_admin' || signedIn?.role === 'business_staff') {
       this.myProfileName = signedIn.display_name;
       this.myProfilePhone = signedIn.phone || '';
+      this.startAutoRefresh();
       void this.refresh();
     }
   }
 
+  readonly autoRefreshIntervalMs = 60_000;
+  private autoRefreshTimer: ReturnType<typeof setInterval> | null = null;
+  private readonly handleVisibilityChange = (): void => {
+    if (typeof document !== 'undefined' && document.visibilityState === 'visible') {
+      void this.refreshIfVisibleAndIdle();
+    }
+  };
   private loadGeneration = 0;
 
+  startAutoRefresh(): void {
+    this.stopAutoRefresh();
+    if (typeof document !== 'undefined') {
+      document.addEventListener('visibilitychange', this.handleVisibilityChange);
+    }
+    this.autoRefreshTimer = setInterval(() => {
+      void this.refreshIfVisibleAndIdle();
+    }, this.autoRefreshIntervalMs);
+  }
+
+  stopAutoRefresh(): void {
+    if (this.autoRefreshTimer !== null) {
+      clearInterval(this.autoRefreshTimer);
+      this.autoRefreshTimer = null;
+    }
+    if (typeof document !== 'undefined') {
+      document.removeEventListener('visibilitychange', this.handleVisibilityChange);
+    }
+  }
+
+  async refreshIfVisibleAndIdle(): Promise<void> {
+    if (typeof document !== 'undefined' && document.visibilityState !== 'visible') {
+      return;
+    }
+    if (this.loading || this.saving || !this.api.hasValidSession()) {
+      return;
+    }
+    await this.refresh();
+  }
+
   ngOnDestroy(): void {
+    this.stopAutoRefresh();
     this.loadGeneration += 1;
     this.releaseProductImagePreview();
     this.releasePackageImagePreview();
@@ -294,6 +457,7 @@ export class AdminPage implements OnInit, OnDestroy {
   }
 
   signOut(): void {
+    this.stopAutoRefresh();
     this.loadGeneration += 1;
     this.orders = [];
     this.requests = [];
@@ -474,14 +638,24 @@ export class AdminPage implements OnInit, OnDestroy {
   }
 
   async decideLedgerPayment(entry: AdminPaymentRecord, approved: boolean): Promise<void> {
-    const note = window.prompt(approved ? 'Verification note (optional)' : 'Reason for rejection');
-    if (note === null) {
+    const decision = await this.confirmDialog.open({
+      title: approved ? `Verify payment for Order #${entry.order_id}?` : `Reject payment for Order #${entry.order_id}?`,
+      message: approved
+        ? `Confirm that you received ₱${(entry.amount_cents / 100).toLocaleString('en-PH', { minimumFractionDigits: 2 })} from ${entry.customer_name} via ${this.paymentMethodLabel(entry.method)}.`
+        : `Reject this submitted payment from ${entry.customer_name}. The customer will be able to submit corrected payment details.`,
+      confirmLabel: approved ? 'Verify payment' : 'Reject payment',
+      tone: approved ? 'primary' : 'danger',
+      inputLabel: approved ? 'Verification note (optional)' : 'Reason for rejection (optional)',
+      inputPlaceholder: approved ? 'e.g. Confirmed in GCash app' : 'e.g. Reference number does not match',
+    });
+    if (!decision.confirmed) {
       return;
     }
     this.error = '';
     try {
-      await this.firstValue(this.api.decidePayment(entry.order_id, entry.id, approved, note.trim() || null));
+      await this.firstValue(this.api.decidePayment(entry.order_id, entry.id, approved, decision.note || null));
       this.notice = `Payment entry #${entry.id} ${approved ? 'verified' : 'rejected'}.`;
+      this.toast.success(this.notice);
       await this.refresh();
     } catch (error) {
       this.error = this.errorMessage(error);
@@ -545,7 +719,9 @@ export class AdminPage implements OnInit, OnDestroy {
   }
 
   async saveMyProfile(): Promise<void> {
+    this.fieldErrors = {};
     if (!this.myProfileName.trim()) {
+      this.fieldErrors['myProfileName'] = 'Enter your display name.';
       this.error = 'Display name is required.';
       return;
     }
@@ -559,6 +735,7 @@ export class AdminPage implements OnInit, OnDestroy {
       this.myProfileName = updated.display_name;
       this.myProfilePhone = updated.phone || '';
       this.notice = 'Your profile has been updated.';
+      this.toast.success(this.notice);
     } catch (error) {
       this.error = this.errorMessage(error);
     } finally {
@@ -568,18 +745,20 @@ export class AdminPage implements OnInit, OnDestroy {
   }
 
   async changeMyPassword(): Promise<void> {
+    this.fieldErrors = {};
     this.error = '';
     this.notice = '';
     if (!this.myCurrentPassword) {
-      this.error = 'Enter your current password.';
-      return;
+      this.fieldErrors['myCurrentPassword'] = 'Enter your current password.';
     }
     if (this.myNewPassword.length < 12) {
-      this.error = 'New password must be at least 12 characters.';
-      return;
+      this.fieldErrors['myNewPassword'] = 'New password must be at least 12 characters.';
     }
     if (this.myNewPassword !== this.myConfirmPassword) {
-      this.error = 'New password confirmation does not match.';
+      this.fieldErrors['myConfirmPassword'] = 'New password confirmation does not match.';
+    }
+    if (Object.keys(this.fieldErrors).length > 0) {
+      this.error = Object.values(this.fieldErrors)[0];
       return;
     }
     this.saving = true;
@@ -589,6 +768,7 @@ export class AdminPage implements OnInit, OnDestroy {
       this.myNewPassword = '';
       this.myConfirmPassword = '';
       this.notice = response.message;
+      this.toast.success(this.notice);
     } catch (error) {
       this.error = this.errorMessage(error);
     } finally {
@@ -753,26 +933,35 @@ export class AdminPage implements OnInit, OnDestroy {
   }
 
   async saveProduct(): Promise<void> {
+    this.fieldErrors = {};
     const rawPrice = this.textValue(this.productPrice);
     const rawInitialStock = this.textValue(this.productInitialStock);
     const price = Number(rawPrice);
     const initialStock = Number(rawInitialStock);
-    if (
-      !this.productName.trim() ||
-      !this.productCategory.trim() ||
-      !this.productQualityId ||
-      rawPrice === '' ||
-      !Number.isFinite(price) ||
-      price < 0
-    ) {
-      this.error = 'Enter a product name, quality classification, and valid rental price.';
-      return;
+    if (!this.productName.trim()) {
+      this.fieldErrors['productName'] = 'Enter a product name.';
+    }
+    if (!this.productCategory.trim()) {
+      this.fieldErrors['productCategory'] = 'Select an equipment category.';
+    }
+    if (!this.productQualityId) {
+      this.fieldErrors['productQuality'] = 'Select a quality classification.';
+    }
+    if (rawPrice === '' || !Number.isFinite(price) || price < 0) {
+      this.fieldErrors['productPrice'] = 'Enter a valid rental price (0 or higher).';
     }
     if (
       !this.productId &&
       (rawInitialStock === '' || !Number.isInteger(initialStock) || initialStock < 0 || initialStock > 1000)
     ) {
-      this.error = 'Enter an initial stock quantity from 0 to 1,000.';
+      this.fieldErrors['productInitialStock'] = 'Enter a whole number from 0 to 1,000.';
+    }
+    const rawInterval = this.textValue(this.productInterval);
+    if (this.productPricingBasis === 'duration' && (!rawInterval || Number(rawInterval) <= 0)) {
+      this.fieldErrors['productInterval'] = 'Enter a billing interval in minutes (e.g. 60).';
+    }
+    if (Object.keys(this.fieldErrors).length > 0) {
+      this.error = 'Please fix the highlighted product fields below.';
       return;
     }
     const duplicate = this.products.some(
@@ -783,12 +972,8 @@ export class AdminPage implements OnInit, OnDestroy {
         product.name.trim().toLowerCase() === this.productName.trim().toLowerCase(),
     );
     if (duplicate) {
+      this.fieldErrors['productName'] = 'A product with this name, category, and quality already exists.';
       this.error = 'A product with this name, category, and quality classification already exists.';
-      return;
-    }
-    const rawInterval = this.textValue(this.productInterval);
-    if (this.productPricingBasis === 'duration' && (!rawInterval || Number(rawInterval) <= 0)) {
-      this.error = 'Duration pricing requires an administrator-defined billing interval in minutes.';
       return;
     }
     this.saving = true;
@@ -831,6 +1016,7 @@ export class AdminPage implements OnInit, OnDestroy {
         }
       }
       this.notice = 'Product saved.';
+      this.toast.success(this.notice);
       await this.refresh();
       this.newProduct();
     } catch (error) {
@@ -842,7 +1028,14 @@ export class AdminPage implements OnInit, OnDestroy {
   }
 
   async deleteProduct(product: Product): Promise<void> {
-    if (!window.confirm(`Delete "${product.name}"? Products referenced by orders or packages cannot be deleted.`)) {
+    const decision = await this.confirmDialog.open({
+      title: `Delete "${product.name}"?`,
+      message:
+        'This permanently removes the product from your catalog. Products linked to orders or packages cannot be deleted.',
+      confirmLabel: 'Delete product',
+      tone: 'danger',
+    });
+    if (!decision.confirmed) {
       return;
     }
     this.saving = true;
@@ -854,6 +1047,7 @@ export class AdminPage implements OnInit, OnDestroy {
         this.newProduct();
       }
       this.notice = `Product "${product.name}" deleted.`;
+      this.toast.success(this.notice);
       await this.refresh();
     } catch (error) {
       this.error = this.errorMessage(error);
@@ -877,6 +1071,7 @@ export class AdminPage implements OnInit, OnDestroy {
     try {
       await this.firstValue(this.api.setProductPrice(product.id, Math.round(price * 100)));
       this.notice = `Rental price updated for ${product.name}.`;
+      this.toast.success(this.notice);
       await this.refresh();
     } catch (error) {
       this.error = this.errorMessage(error);
@@ -900,6 +1095,7 @@ export class AdminPage implements OnInit, OnDestroy {
     try {
       await this.firstValue(this.api.setProductStock(product.id, quantity));
       this.notice = `Available stock updated for ${product.name}.`;
+      this.toast.success(this.notice);
       await this.refresh();
     } catch (error) {
       this.error = this.errorMessage(error);
@@ -997,6 +1193,7 @@ export class AdminPage implements OnInit, OnDestroy {
         }),
       );
       this.notice = 'Business profile and storefront branding saved.';
+      this.toast.success(this.notice);
     } catch (error) {
       this.error = this.errorMessage(error);
     } finally {
@@ -1071,8 +1268,18 @@ export class AdminPage implements OnInit, OnDestroy {
   }
 
   async createStaff(): Promise<void> {
-    if (!this.staffName.trim() || !this.staffEmail.trim() || this.staffPassword.length < 12) {
-      this.error = 'Enter a staff name, valid email, and password of at least 12 characters.';
+    this.fieldErrors = {};
+    if (!this.staffName.trim()) {
+      this.fieldErrors['staffName'] = 'Enter the staff member’s full name.';
+    }
+    if (!this.staffEmail.trim() || !this.staffEmail.includes('@')) {
+      this.fieldErrors['staffEmail'] = 'Enter a valid email address.';
+    }
+    if (this.staffPassword.length < 12) {
+      this.fieldErrors['staffPassword'] = 'Password must be at least 12 characters.';
+    }
+    if (Object.keys(this.fieldErrors).length > 0) {
+      this.error = 'Please fix the highlighted staff fields below.';
       return;
     }
     this.saving = true;
@@ -1092,6 +1299,7 @@ export class AdminPage implements OnInit, OnDestroy {
       this.staffPhone = '';
       this.staffPassword = '';
       this.notice = 'Staff account created.';
+      this.toast.success(this.notice);
       await this.refresh();
     } catch (error) {
       this.error = this.errorMessage(error);
@@ -1102,12 +1310,24 @@ export class AdminPage implements OnInit, OnDestroy {
   }
 
   async setStaffActive(member: BusinessStaff, isActive: boolean): Promise<void> {
+    if (!isActive) {
+      const decision = await this.confirmDialog.open({
+        title: `Disable ${member.display_name}?`,
+        message: `${member.display_name} (${member.email}) will immediately lose access to this business portal until re-enabled.`,
+        confirmLabel: 'Disable staff',
+        tone: 'danger',
+      });
+      if (!decision.confirmed) {
+        return;
+      }
+    }
     this.saving = true;
     this.error = '';
     this.notice = '';
     try {
       await this.firstValue(this.api.setBusinessStaffActive(member.id, isActive));
       this.notice = `${member.display_name} ${isActive ? 'enabled' : 'disabled'}.`;
+      this.toast.success(this.notice);
       await this.refresh();
     } catch (error) {
       this.error = this.errorMessage(error);
@@ -1150,7 +1370,14 @@ export class AdminPage implements OnInit, OnDestroy {
   }
 
   async deletePackage(rentalPackage: RentalPackage): Promise<void> {
-    if (!window.confirm(`Delete package "${rentalPackage.name}"? Packages referenced by orders cannot be deleted.`)) {
+    const decision = await this.confirmDialog.open({
+      title: `Delete package "${rentalPackage.name}"?`,
+      message:
+        'This removes the rental package from your catalog. Packages linked to existing orders cannot be deleted.',
+      confirmLabel: 'Delete package',
+      tone: 'danger',
+    });
+    if (!decision.confirmed) {
       return;
     }
     this.saving = true;
@@ -1162,6 +1389,7 @@ export class AdminPage implements OnInit, OnDestroy {
         this.newPackage();
       }
       this.notice = `Package "${rentalPackage.name}" deleted.`;
+      this.toast.success(this.notice);
       await this.refresh();
     } catch (error) {
       this.error = this.errorMessage(error);
@@ -1217,23 +1445,29 @@ export class AdminPage implements OnInit, OnDestroy {
   }
 
   async savePackage(): Promise<void> {
-    if (!this.packageName.trim() || this.packageComponents.length === 0) {
-      this.error = 'Enter a package name and at least one equipment component.';
-      return;
+    this.fieldErrors = {};
+    if (!this.packageName.trim()) {
+      this.fieldErrors['packageName'] = 'Enter a package name.';
+    }
+    if (this.packageComponents.length === 0) {
+      this.fieldErrors['packageComponents'] = 'Add at least one equipment item to this package.';
     }
     const rawPrice = this.textValue(this.packagePrice);
     const price = Number(rawPrice);
     if (rawPrice !== '' && (!Number.isFinite(price) || price < 0)) {
-      this.error = 'Enter a valid non-negative package price.';
-      return;
-    }
-    if (this.packagePricingBasis !== 'unconfigured' && (rawPrice === '' || !Number.isFinite(price) || price < 0)) {
-      this.error = 'Enter a valid package price before configuring its pricing basis.';
-      return;
+      this.fieldErrors['packagePrice'] = 'Enter a valid non-negative package price.';
+    } else if (
+      this.packagePricingBasis !== 'unconfigured' &&
+      (rawPrice === '' || !Number.isFinite(price) || price < 0)
+    ) {
+      this.fieldErrors['packagePrice'] = 'Enter a package price before setting the billing basis.';
     }
     const rawInterval = this.textValue(this.packageInterval);
     if (this.packagePricingBasis === 'duration' && (!rawInterval || Number(rawInterval) <= 0)) {
-      this.error = 'Duration pricing requires an administrator-defined billing interval in minutes.';
+      this.fieldErrors['packageInterval'] = 'Enter a billing interval in minutes (e.g. 60).';
+    }
+    if (Object.keys(this.fieldErrors).length > 0) {
+      this.error = 'Please fix the highlighted package fields below.';
       return;
     }
     if (
@@ -1244,6 +1478,7 @@ export class AdminPage implements OnInit, OnDestroy {
           Number(component.quantity) > 1000,
       )
     ) {
+      this.fieldErrors['packageComponents'] = 'Each included item quantity must be a whole number from 1 to 1,000.';
       this.error = 'Each package component quantity must be a whole number from 1 to 1,000.';
       return;
     }
@@ -1288,6 +1523,7 @@ export class AdminPage implements OnInit, OnDestroy {
         }
       }
       this.notice = 'Package saved.';
+      this.toast.success(this.notice);
       this.newPackage();
       await this.refresh();
     } catch (error) {
@@ -1299,7 +1535,14 @@ export class AdminPage implements OnInit, OnDestroy {
   }
 
   async addAsset(): Promise<void> {
-    if (!this.assetProductId || !this.assetTag.trim()) {
+    this.fieldErrors = {};
+    if (!this.assetProductId) {
+      this.fieldErrors['assetProduct'] = 'Select a catalog product.';
+    }
+    if (!this.assetTag.trim()) {
+      this.fieldErrors['assetTag'] = 'Enter a unique tag (e.g. KAR-001).';
+    }
+    if (Object.keys(this.fieldErrors).length > 0) {
       this.error = 'Select a product and enter an asset tag.';
       return;
     }
@@ -1314,6 +1557,7 @@ export class AdminPage implements OnInit, OnDestroy {
         }),
       );
       this.notice = 'Inventory item added.';
+      this.toast.success(this.notice);
       this.assetTag = '';
       await this.refresh();
     } catch (error) {
@@ -1329,6 +1573,7 @@ export class AdminPage implements OnInit, OnDestroy {
     try {
       await this.firstValue(this.api.updateAsset(asset.id, condition));
       this.notice = `Condition updated for ${asset.asset_tag}.`;
+      this.toast.success(this.notice);
       await this.refresh();
     } catch (error) {
       const message = this.errorMessage(error);
@@ -1340,11 +1585,13 @@ export class AdminPage implements OnInit, OnDestroy {
   }
 
   async deleteAsset(asset: InventoryAsset): Promise<void> {
-    if (
-      !window.confirm(
-        `Delete inventory unit "${asset.asset_tag}"? Units with rental allocation history cannot be deleted.`,
-      )
-    ) {
+    const decision = await this.confirmDialog.open({
+      title: `Delete inventory unit "${asset.asset_tag}"?`,
+      message: 'This removes the physical unit from stock. Units with existing rental history cannot be deleted.',
+      confirmLabel: 'Delete unit',
+      tone: 'danger',
+    });
+    if (!decision.confirmed) {
       return;
     }
     this.saving = true;
@@ -1353,6 +1600,7 @@ export class AdminPage implements OnInit, OnDestroy {
     try {
       await this.firstValue(this.api.deleteAsset(asset.id));
       this.notice = `Inventory unit "${asset.asset_tag}" deleted.`;
+      this.toast.success(this.notice);
       await this.refresh();
     } catch (error) {
       this.error = this.errorMessage(error);
@@ -1365,16 +1613,44 @@ export class AdminPage implements OnInit, OnDestroy {
   async updateOrder(order: RentalOrder, status: RentalOrder['status']): Promise<void> {
     let note: string | null = null;
     if (status === 'rejected') {
-      const entered = window.prompt('Reason for rejecting this rental request (optional)', '');
-      if (entered === null) {
+      const decision = await this.confirmDialog.open({
+        title: `Reject Order #${order.id}?`,
+        message: `Rejecting this request from ${order.customer_name} immediately releases any held inventory.`,
+        confirmLabel: 'Reject order',
+        tone: 'danger',
+        inputLabel: 'Reason for rejection (optional)',
+        inputPlaceholder: 'e.g. Requested dates are outside delivery area',
+      });
+      if (!decision.confirmed) {
         return;
       }
-      note = entered.trim() || null;
+      note = decision.note || null;
+    } else if (status === 'confirmed') {
+      const decision = await this.confirmDialog.open({
+        title: `Confirm Order #${order.id}?`,
+        message: `Confirming holds the assigned equipment for ${order.customer_name} and notifies them to submit payment.`,
+        confirmLabel: 'Confirm booking',
+        tone: 'primary',
+      });
+      if (!decision.confirmed) {
+        return;
+      }
+    } else if (status === 'completed') {
+      const decision = await this.confirmDialog.open({
+        title: `Mark Order #${order.id} completed?`,
+        message: `Mark equipment as returned and close this rental for ${order.customer_name}.`,
+        confirmLabel: 'Mark completed',
+        tone: 'primary',
+      });
+      if (!decision.confirmed) {
+        return;
+      }
     }
     this.error = '';
     try {
       await this.firstValue(this.api.setOrderStatus(order.id, status, note));
-      this.notice = `Order #${order.id} updated.`;
+      this.notice = `Order #${order.id} marked as ${status.replaceAll('_', ' ')}.`;
+      this.toast.success(this.notice);
       await this.refresh();
     } catch (error) {
       this.error = this.errorMessage(error);
@@ -1384,14 +1660,24 @@ export class AdminPage implements OnInit, OnDestroy {
   }
 
   async decideRequest(request: OrderRequestReview, approved: boolean): Promise<void> {
-    const note = window.prompt(approved ? 'Approval note (optional)' : 'Reason for rejection');
-    if (note === null) {
+    const decision = await this.confirmDialog.open({
+      title: approved ? `Approve ${request.kind} request?` : `Reject ${request.kind} request?`,
+      message: approved
+        ? `Apply this ${request.kind} request for Order #${request.order_id} (${request.customer_name || 'Customer #' + request.customer_id}).`
+        : `Decline this ${request.kind} request for Order #${request.order_id} and keep the current booking.`,
+      confirmLabel: approved ? 'Approve request' : 'Reject request',
+      tone: approved ? 'primary' : 'danger',
+      inputLabel: approved ? 'Approval note (optional)' : 'Reason for rejection (optional)',
+      inputPlaceholder: approved ? 'Optional message for the customer' : 'Explain why this request was declined',
+    });
+    if (!decision.confirmed) {
       return;
     }
     this.error = '';
     try {
-      await this.firstValue(this.api.decideRequest(request.order_id, request.id, approved, note.trim() || null));
+      await this.firstValue(this.api.decideRequest(request.order_id, request.id, approved, decision.note || null));
       this.notice = `Request #${request.id} ${approved ? 'approved' : 'rejected'}.`;
+      this.toast.success(this.notice);
       await this.refresh();
     } catch (error) {
       this.error = this.errorMessage(error);
@@ -1434,14 +1720,24 @@ export class AdminPage implements OnInit, OnDestroy {
   }
 
   async decidePayment(order: RentalOrder, entry: PaymentEntry, approved: boolean): Promise<void> {
-    const note = window.prompt(approved ? 'Verification note (optional)' : 'Reason for rejection');
-    if (note === null) {
+    const decision = await this.confirmDialog.open({
+      title: approved ? `Verify payment for Order #${order.id}?` : `Reject payment for Order #${order.id}?`,
+      message: approved
+        ? `Confirm that you received ₱${(entry.amount_cents / 100).toLocaleString('en-PH', { minimumFractionDigits: 2 })} from ${order.customer_name} via ${this.paymentMethodLabel(entry.method)}.`
+        : `Reject this payment entry from ${order.customer_name}. They can submit updated proof or reference details.`,
+      confirmLabel: approved ? 'Verify payment' : 'Reject payment',
+      tone: approved ? 'primary' : 'danger',
+      inputLabel: approved ? 'Verification note (optional)' : 'Reason for rejection (optional)',
+      inputPlaceholder: approved ? 'e.g. Received in bank account' : 'e.g. Receipt image unreadable',
+    });
+    if (!decision.confirmed) {
       return;
     }
     this.error = '';
     try {
-      await this.firstValue(this.api.decidePayment(order.id, entry.id, approved, note.trim() || null));
+      await this.firstValue(this.api.decidePayment(order.id, entry.id, approved, decision.note || null));
       this.notice = `Payment entry #${entry.id} ${approved ? 'verified' : 'rejected'}.`;
+      this.toast.success(this.notice);
       await this.refresh();
     } catch (error) {
       this.error = this.errorMessage(error);
@@ -1495,6 +1791,7 @@ export class AdminPage implements OnInit, OnDestroy {
         }),
       );
       this.notice = 'Manual payment entry recorded in the order history.';
+      this.toast.success(this.notice);
       this.manualPaymentOrderId = null;
       this.manualPaymentAmount = '';
       this.manualPaymentReference = '';
@@ -1509,10 +1806,22 @@ export class AdminPage implements OnInit, OnDestroy {
   }
 
   async setCustomerActive(customer: Customer, isActive: boolean): Promise<void> {
+    if (!isActive) {
+      const decision = await this.confirmDialog.open({
+        title: `Disable ${customer.display_name}?`,
+        message: `${customer.email} will not be able to sign in or submit new bookings until re-enabled.`,
+        confirmLabel: 'Disable account',
+        tone: 'danger',
+      });
+      if (!decision.confirmed) {
+        return;
+      }
+    }
     this.error = '';
     try {
       await this.firstValue(this.api.setCustomerActive(customer.id, isActive));
       this.notice = `Customer ${customer.email} ${isActive ? 'enabled' : 'disabled'}.`;
+      this.toast.success(this.notice);
       await this.refresh();
     } catch (error) {
       this.error = this.errorMessage(error);

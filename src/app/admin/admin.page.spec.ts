@@ -155,4 +155,22 @@ describe('AdminPage', () => {
     expect(component.visibleSections.map((section) => section.id)).not.toContain('staff');
     expect(component.visibleSections.map((section) => section.id)).not.toContain('settings');
   });
+
+  it('pauses 60-second auto-refresh when document is hidden and refreshes when visible', async () => {
+    const { component } = setup('business_admin');
+    await component.refresh();
+    const refreshSpy = vi.spyOn(component, 'refresh').mockResolvedValue();
+    const visibilitySpy = vi.spyOn(document, 'visibilityState', 'get');
+
+    visibilitySpy.mockReturnValue('hidden');
+    await component.refreshIfVisibleAndIdle();
+    expect(refreshSpy).not.toHaveBeenCalled();
+
+    visibilitySpy.mockReturnValue('visible');
+    await component.refreshIfVisibleAndIdle();
+    expect(refreshSpy).toHaveBeenCalledTimes(1);
+
+    visibilitySpy.mockRestore();
+    component.stopAutoRefresh();
+  });
 });

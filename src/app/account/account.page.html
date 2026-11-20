@@ -1,17 +1,33 @@
 <ion-header class="account-header">
   <div class="account-topbar">
-    <a class="brand" routerLink="/home" aria-label="KARAOKE home">KARAOKE</a>
+    <a class="brand" routerLink="/home" aria-label="KARAOKE home">
+      <app-brand-mark></app-brand-mark>
+    </a>
     @if (!user || user.role === 'customer') {
     <span class="page-context">Customer account</span>
     }
-    <a class="back-link" routerLink="/home">Browse rentals</a>
+    <a class="back-link" routerLink="/home">
+      <app-icon name="store" [size]="15"></app-icon>
+      Browse rentals
+    </a>
   </div>
 </ion-header>
 
 <ion-content>
   <main>
     @if (error) {
-    <div class="message error" role="alert">{{ error }}</div>
+    <div class="message error" role="alert">
+      <span>{{ error }}</span>
+      @if (user) {
+      <button
+        type="button"
+        class="retry-btn"
+        (click)="user.role === 'business_pending' ? checkApprovalStatus(true) : loadAccount()"
+      >
+        Retry
+      </button>
+      }
+    </div>
     } @if (notice) {
     <div class="message notice" role="status">{{ notice }}</div>
     } @if (!user) {
@@ -22,19 +38,30 @@
         {{ mode === 'login' ? 'Sign in to track rental requests, update your profile, and manage payments.' : 'Create an
         account to request equipment and keep track of your rentals.' }}
       </p>
-      <form (ngSubmit)="authenticate()">
+      <form (ngSubmit)="authenticate()" novalidate>
         @if (mode === 'register') {
         <label>
-          Full name
-          <input [(ngModel)]="displayName" name="displayName" autocomplete="name" required maxlength="120" />
+          <span>Full name <span class="required-mark" aria-hidden="true">*</span></span>
+          <input
+            [(ngModel)]="displayName"
+            name="displayName"
+            autocomplete="name"
+            placeholder="e.g. Maria Santos"
+            [attr.aria-invalid]="fieldErrors['displayName'] ? 'true' : null"
+            required
+            maxlength="120"
+          />
+          @if (fieldErrors['displayName']) {
+          <span class="field-error" role="alert">{{ fieldErrors['displayName'] }}</span>
+          }
         </label>
         <label>
-          Phone (optional)
-          <input [(ngModel)]="phone" name="phone" autocomplete="tel" maxlength="40" />
+          <span>Phone <span class="optional-mark">(optional)</span></span>
+          <input [(ngModel)]="phone" name="phone" autocomplete="tel" placeholder="e.g. 0917 123 4567" maxlength="40" />
         </label>
         }
         <label>
-          Email
+          <span>Email <span class="required-mark" aria-hidden="true">*</span></span>
           <input
             [(ngModel)]="email"
             name="email"
@@ -43,12 +70,18 @@
             autocapitalize="off"
             spellcheck="false"
             placeholder="you@example.com"
+            [attr.aria-invalid]="fieldErrors['email'] ? 'true' : null"
             required
             maxlength="320"
           />
+          @if (fieldErrors['email']) {
+          <span class="field-error" role="alert">{{ fieldErrors['email'] }}</span>
+          }
         </label>
         <div class="auth-field">
-          <label for="account-password">Password</label>
+          <label for="account-password"
+            ><span>Password <span class="required-mark" aria-hidden="true">*</span></span></label
+          >
           <div class="password-control">
             <input
               id="account-password"
@@ -58,6 +91,7 @@
               [attr.autocomplete]="mode === 'register' ? 'new-password' : 'current-password'"
               [minlength]="mode === 'register' ? 12 : null"
               [placeholder]="mode === 'register' ? 'At least 12 characters' : 'Enter your password'"
+              [attr.aria-invalid]="fieldErrors['password'] ? 'true' : null"
               required
             />
             <button
@@ -70,7 +104,9 @@
               {{ showPassword ? 'Hide' : 'Show' }}
             </button>
           </div>
-          @if (mode === 'register') {
+          @if (fieldErrors['password']) {
+          <span class="field-error" role="alert">{{ fieldErrors['password'] }}</span>
+          } @if (mode === 'register') {
           <small>Use at least 12 characters.</small>
           } @else {
           <div class="auth-helper-row">
@@ -91,11 +127,19 @@
           {{ mode === 'login' ? 'Create an account' : 'Sign in' }}
         </button>
       </div>
-      <a class="business-register-link" routerLink="/business-register">Register a rental business</a>
+      <div class="auth-footer-links">
+        <a class="business-register-link" routerLink="/business-register">
+          <app-icon name="building" [size]="15"></app-icon>
+          Register a rental business
+        </a>
+      </div>
     </section>
     } @else if (user.role === 'business_pending') {
     <section class="auth-panel" aria-live="polite">
-      <p class="eyebrow">BUSINESS APPLICATION STATUS</p>
+      <div class="pending-head">
+        <p class="eyebrow">BUSINESS APPLICATION STATUS</p>
+        <app-status-badge [value]="businessApplication?.status || 'pending'"></app-status-badge>
+      </div>
       <h1>
         {{ businessApplication?.status === 'rejected' ? 'Application not approved' : 'Application under review' }}
       </h1>
@@ -108,7 +152,8 @@
       <div class="application-meta">
         <div><span>Business name</span><strong>{{ businessApplication.name }}</strong></div>
         <div>
-          <span>Status</span><strong style="text-transform: capitalize">{{ businessApplication.status }}</strong>
+          <span>Status</span>
+          <app-status-badge [value]="businessApplication.status"></app-status-badge>
         </div>
         <div><span>Contact email</span><strong>{{ businessApplication.contact_email || user.email }}</strong></div>
         <div><span>Contact phone</span><strong>{{ businessApplication.contact_phone || '—' }}</strong></div>
@@ -121,6 +166,7 @@
       }
       <div class="order-actions">
         <button class="secondary-button" type="button" (click)="checkApprovalStatus(true)" [disabled]="loading">
+          <app-icon name="refresh" [size]="15"></app-icon>
           {{ loading ? 'Checking…' : 'Check approval status' }}
         </button>
         <button class="text-button" type="button" (click)="signOut()">Sign out</button>
@@ -131,7 +177,7 @@
       <div>
         <p class="eyebrow">MY ACCOUNT</p>
         <h1>Hello, {{ user.display_name }}</h1>
-        <p>{{ user.email }}</p>
+        <p class="subtitle">{{ user.email }}</p>
       </div>
       <div class="heading-actions">
         @if (user.role === 'business_admin' || user.role === 'business_staff') {
@@ -139,112 +185,44 @@
         } @if (user.role === 'platform_admin') {
         <a class="secondary-button" routerLink="/platform">Platform administration</a>
         }
-        <button class="text-button" type="button" (click)="signOut()">Sign out</button>
+        <button class="secondary-button" type="button" (click)="signOut()">
+          <app-icon name="log-out" [size]="15"></app-icon>
+          Sign out
+        </button>
       </div>
     </section>
 
     <section class="kpi-strip" aria-label="Customer overview">
-      <article class="kpi-card"><span>Total orders</span><strong>{{ orders.length }}</strong></article>
-      <article class="kpi-card"><span>Active rentals</span><strong>{{ activeOrderCount }}</strong></article>
       <article class="kpi-card">
-        <span>Unpaid balance</span>
-        <strong>{{ totalUnpaidBalanceCents / 100 | currency: 'PHP' : 'symbol' : '1.2-2' : 'en-PH' }}</strong>
+        <div class="kpi-head">
+          <span>Total orders</span>
+          <app-icon name="shopping-bag" [size]="16"></app-icon>
+        </div>
+        <strong>{{ orders.length }}</strong>
       </article>
-      <article class="kpi-card"><span>Unread notifications</span><strong>{{ unreadNotifications }}</strong></article>
-    </section>
-
-    <section class="profile-panel" aria-labelledby="notifications-title">
-      <div>
-        <p class="eyebrow">UPDATES</p>
-        <h2 id="notifications-title">
-          Notifications @if (unreadNotifications > 0) {
-          <span class="unread-pill">{{ unreadNotifications }}</span>
-          }
-        </h2>
-        @if (unreadNotifications > 0) {
-        <button class="text-button" type="button" (click)="markAllNotificationsRead()">Mark all read</button>
-        }
-      </div>
-      <div class="notification-list">
-        @for (item of notifications; track item.id) {
-        <article class="notification-item" [class.unread]="!item.is_read">
-          <div>
-            <strong>{{ item.title }}</strong>
-            <p>{{ item.message }}</p>
-            <small>{{ item.created_at | date: 'short' }}</small>
-          </div>
-          <div class="notification-actions">
-            @if (item.link) {
-            <a class="details-link" [routerLink]="item.link" (click)="markNotificationRead(item)">View</a>
-            } @if (!item.is_read) {
-            <button class="text-button" type="button" (click)="markNotificationRead(item)">Mark read</button>
-            }
-          </div>
-        </article>
-        } @empty {
-        <p class="policy-note">No notifications yet. Order and payment updates will appear here.</p>
-        }
-      </div>
-    </section>
-
-    <section class="profile-panel">
-      <div>
-        <p class="eyebrow">PROFILE DETAILS</p>
-        <h2>Contact information</h2>
-      </div>
-      <form class="profile-form" (ngSubmit)="saveProfile()">
-        <label>
-          Display name
-          <input [(ngModel)]="profileName" name="profileName" required maxlength="120" />
-        </label>
-        <label>
-          Phone
-          <input [(ngModel)]="profilePhone" name="profilePhone" maxlength="40" />
-        </label>
-        <button type="submit" [disabled]="saving">Save profile</button>
-      </form>
-    </section>
-
-    <section class="profile-panel">
-      <div>
-        <p class="eyebrow">ACCOUNT SECURITY</p>
-        <h2>Change password</h2>
-      </div>
-      <form class="profile-form" (ngSubmit)="changePassword()">
-        <label>
-          Current password
-          <input
-            [(ngModel)]="currentPassword"
-            name="currentPassword"
-            type="password"
-            autocomplete="current-password"
-            required
-          />
-        </label>
-        <label>
-          New password (12+ chars)
-          <input
-            [(ngModel)]="newPassword"
-            name="newPassword"
-            type="password"
-            autocomplete="new-password"
-            minlength="12"
-            required
-          />
-        </label>
-        <label>
-          Confirm new password
-          <input
-            [(ngModel)]="confirmPassword"
-            name="confirmPassword"
-            type="password"
-            autocomplete="new-password"
-            minlength="12"
-            required
-          />
-        </label>
-        <button type="submit" [disabled]="saving">Update password</button>
-      </form>
+      <article class="kpi-card">
+        <div class="kpi-head">
+          <span>Active rentals</span>
+          <app-icon name="calendar" [size]="16"></app-icon>
+        </div>
+        <strong>{{ activeOrderCount }}</strong>
+      </article>
+      <article class="kpi-card">
+        <div class="kpi-head">
+          <span>Unpaid balance</span>
+          <app-icon name="credit-card" [size]="16"></app-icon>
+        </div>
+        <strong class="tabular-nums">
+          {{ totalUnpaidBalanceCents / 100 | currency: 'PHP' : 'symbol' : '1.2-2' : 'en-PH' }}
+        </strong>
+      </article>
+      <article class="kpi-card">
+        <div class="kpi-head">
+          <span>Unread notifications</span>
+          <app-icon name="bell" [size]="16"></app-icon>
+        </div>
+        <strong>{{ unreadNotifications }}</strong>
+      </article>
     </section>
 
     <section class="orders-section">
@@ -253,7 +231,7 @@
           <p class="eyebrow">RENTAL HISTORY</p>
           <h2>Your orders</h2>
         </div>
-        <div class="filter-bar" style="margin: 0">
+        <div class="filter-bar compact-filter">
           <select [(ngModel)]="orderFilter" name="orderFilter" aria-label="Filter orders by status">
             <option value="all">All orders ({{ orders.length }})</option>
             <option value="active">Active & pending ({{ activeOrderCount }})</option>
@@ -265,11 +243,12 @@
           }
         </div>
       </div>
+
       @if (!loading && orders.length === 0) {
       <div class="empty-state">
         <h3>No rental requests yet</h3>
         <p>When you submit a request from the catalog, its status and details will appear here.</p>
-        <a routerLink="/home">Browse equipment</a>
+        <a class="secondary-button" routerLink="/home">Browse equipment</a>
       </div>
       } @else if (!loading && filteredOrders.length === 0) {
       <div class="empty-state">
@@ -283,54 +262,82 @@
             <h3>{{ order.starts_at | date: 'medium' }} – {{ order.ends_at | date: 'medium' }}</h3>
           </div>
           <div class="status-pills">
-            <span class="status">{{ order.status.replaceAll('_', ' ') }}</span>
-            <span class="status payment">{{ paymentStatus(order.payment_status) }}</span>
+            <app-status-badge [value]="order.status"></app-status-badge>
+            <app-status-badge
+              [value]="order.payment_status"
+              [label]="paymentStatus(order.payment_status)"
+            ></app-status-badge>
           </div>
         </header>
+
+        <app-order-progress [status]="order.status" [paymentStatus]="order.payment_status"></app-order-progress>
+
         <div class="order-lines">
           @for (line of order.lines; track line.id) {
           <div>
             <span>{{ line.quantity }} × {{ line.name }}</span>
-            <strong>{{ line.line_total_cents / 100 | currency: 'PHP' : 'symbol' : '1.2-2' : 'en-PH' }}</strong>
+            <strong class="tabular-nums">
+              {{ line.line_total_cents / 100 | currency: 'PHP' : 'symbol' : '1.2-2' : 'en-PH' }}
+            </strong>
           </div>
           }
         </div>
-        <div class="order-total">
-          <span>Total · paid · balance</span>
-          <strong>
-            {{ order.total_cents / 100 | currency: 'PHP' : 'symbol' : '1.2-2' : 'en-PH' }} · {{ order.paid_cents / 100 |
-            currency: 'PHP' : 'symbol' : '1.2-2' : 'en-PH' }} · {{ order.balance_cents / 100 | currency: 'PHP' :
-            'symbol' : '1.2-2' : 'en-PH' }}
-          </strong>
+
+        <div class="order-financials">
+          <div>
+            <span>Total</span>
+            <strong class="tabular-nums">
+              {{ order.total_cents / 100 | currency: 'PHP' : 'symbol' : '1.2-2' : 'en-PH' }}
+            </strong>
+          </div>
+          <div>
+            <span>Verified paid</span>
+            <strong class="tabular-nums">
+              {{ order.paid_cents / 100 | currency: 'PHP' : 'symbol' : '1.2-2' : 'en-PH' }}
+            </strong>
+          </div>
+          <div>
+            <span>Remaining balance</span>
+            <strong class="tabular-nums" [class.balance-due]="order.balance_cents > 0">
+              {{ order.balance_cents / 100 | currency: 'PHP' : 'symbol' : '1.2-2' : 'en-PH' }}
+            </strong>
+          </div>
         </div>
 
         @if (order.requests.length > 0) {
         <div class="history-list">
           <h4>Change and cancellation requests</h4>
           @for (request of order.requests; track request.id) {
-          <p>
-            {{ request.kind }} · {{ request.status }} · {{ request.reason }} @if (request.decision_note) { · Note: {{
-            request.decision_note }} }
-          </p>
+          <div class="history-row">
+            <app-status-badge
+              [value]="request.status"
+              [label]="request.kind + ' · ' + request.status"
+            ></app-status-badge>
+            <span> {{ request.reason }} @if (request.decision_note) { · Note: {{ request.decision_note }} } </span>
+          </div>
           }
         </div>
         } @if (order.payments.length > 0) {
         <div class="history-list">
           <h4>Payment history</h4>
           @for (payment of order.payments; track payment.id) {
-          <p>
-            {{ payment.paid_at | date: 'short' }} · {{ payment.kind }} · {{ payment.amount_cents / 100 | currency: 'PHP'
-            : 'symbol' : '1.2-2' : 'en-PH' }} · {{ paymentMethodLabel(payment.method) }} · {{ payment.status }} @if
-            (payment.reference_number) { · Ref {{ payment.reference_number }} } @if (payment.notes) { · {{ payment.notes
-            }} } @if (payment.verified_by_id) { · Reviewed by admin #{{ payment.verified_by_id }} }
-          </p>
-          @if (payment.proof_available) {
-          <button type="button" class="text-button" (click)="viewPaymentProof(order.id, payment.id)">
-            View payment proof
-          </button>
+          <div class="history-row">
+            <app-status-badge [value]="payment.status"></app-status-badge>
+            <span class="tabular-nums">
+              {{ payment.paid_at | date: 'short' }} · {{ payment.kind }} · {{ payment.amount_cents / 100 | currency:
+              'PHP' : 'symbol' : '1.2-2' : 'en-PH' }} · {{ paymentMethodLabel(payment.method) }} @if
+              (payment.reference_number) { · Ref {{ payment.reference_number }} } @if (payment.notes) { · {{
+              payment.notes }} } @if (payment.verified_by_id) { · Reviewed by admin #{{ payment.verified_by_id }} }
+            </span>
+            @if (payment.proof_available) {
+            <button type="button" class="text-button" (click)="viewPaymentProof(order.id, payment.id)">
+              View payment proof
+            </button>
+            }
+          </div>
           @if (paymentProofPreviews[payment.id]) {
           <img class="payment-proof-preview" [src]="paymentProofPreviews[payment.id]" alt="Uploaded payment proof" />
-          } } }
+          } }
         </div>
         } @if (order.history.length > 0) {
         <details class="history-list">
@@ -343,6 +350,7 @@
           }
         </details>
         }
+
         <div class="order-actions">
           <a class="details-link" [routerLink]="['/orders', order.id]">View details & receipt →</a>
           @if (canRequest(order) && !hasPendingRequest(order)) {
@@ -416,14 +424,29 @@
         </section>
         } @if (paymentOrderId === order.id) {
         <section class="request-editor">
-          <h4>Payment details for administrator review</h4>
+          <h4>Payment details for business verification</h4>
+          <app-payment-instructions
+            [method]="paymentMethod"
+            [businessName]="order.business_name"
+          ></app-payment-instructions>
           <div class="payment-form">
             <label
-              >Amount (₱)
-              <input type="number" min="0.01" step="0.01" [(ngModel)]="paymentAmount" [name]="'amount-' + order.id"
-            /></label>
+              ><span>Amount (₱) <span class="required-mark" aria-hidden="true">*</span></span>
+              <input
+                type="number"
+                min="0.01"
+                step="0.01"
+                placeholder="e.g. 1500.00"
+                [(ngModel)]="paymentAmount"
+                [name]="'amount-' + order.id"
+                [attr.aria-invalid]="fieldErrors['paymentAmount'] ? 'true' : null"
+              />
+              @if (fieldErrors['paymentAmount']) {
+              <span class="field-error" role="alert">{{ fieldErrors['paymentAmount'] }}</span>
+              }
+            </label>
             <label>
-              Method
+              <span>Method <span class="required-mark" aria-hidden="true">*</span></span>
               <select [(ngModel)]="paymentMethod" [name]="'method-' + order.id">
                 <option value="cash">Cash</option>
                 <option value="gcash">GCash</option>
@@ -431,18 +454,37 @@
               </select>
             </label>
             <label
-              >Paid at <input type="datetime-local" [(ngModel)]="paymentDate" [name]="'paid-at-' + order.id"
-            /></label>
+              ><span>Paid at <span class="required-mark" aria-hidden="true">*</span></span>
+              <input
+                type="datetime-local"
+                [(ngModel)]="paymentDate"
+                [name]="'paid-at-' + order.id"
+                [attr.aria-invalid]="fieldErrors['paymentDate'] ? 'true' : null"
+              />
+              @if (fieldErrors['paymentDate']) {
+              <span class="field-error" role="alert">{{ fieldErrors['paymentDate'] }}</span>
+              }
+            </label>
             <label
-              >Reference number <input [(ngModel)]="paymentReference" [name]="'reference-' + order.id" maxlength="160"
+              ><span>Reference number <span class="optional-mark">(recommended for GCash/Bank)</span></span>
+              <input
+                [(ngModel)]="paymentReference"
+                [name]="'reference-' + order.id"
+                placeholder="e.g. GCASH-90218442"
+                maxlength="160"
             /></label>
           </div>
           <label
-            >Notes
-            <textarea [(ngModel)]="paymentNotes" [name]="'payment-notes-' + order.id" maxlength="1000"></textarea>
+            ><span>Notes <span class="optional-mark">(optional)</span></span>
+            <textarea
+              [(ngModel)]="paymentNotes"
+              [name]="'payment-notes-' + order.id"
+              placeholder="Any details that help the business match your payment"
+              maxlength="1000"
+            ></textarea>
           </label>
           <label class="proof-upload"
-            >Payment proof image (optional, JPEG/PNG/WebP, 5 MB max)
+            ><span>Payment proof image <span class="optional-mark">(optional, JPEG/PNG/WebP, 5 MB max)</span></span>
             <input type="file" accept="image/jpeg,image/png,image/webp" (change)="selectPaymentProof($event)" />
           </label>
           @if (paymentProofPreviewUrl) {
@@ -464,6 +506,125 @@
       </article>
       }
     </section>
+
+    <section class="panel-card" aria-labelledby="notifications-title">
+      <div class="panel-head">
+        <div>
+          <p class="eyebrow">UPDATES</p>
+          <h2 id="notifications-title">
+            Notifications @if (unreadNotifications > 0) {
+            <span class="unread-pill">{{ unreadNotifications }}</span>
+            }
+          </h2>
+        </div>
+        @if (unreadNotifications > 0) {
+        <button class="secondary-button" type="button" (click)="markAllNotificationsRead()">Mark all read</button>
+        }
+      </div>
+      <div class="notification-list">
+        @for (item of notifications; track item.id) {
+        <article class="notification-item" [class.unread]="!item.is_read">
+          <div>
+            <strong>{{ item.title }}</strong>
+            <p>{{ item.message }}</p>
+            <small>{{ item.created_at | date: 'short' }}</small>
+          </div>
+          <div class="notification-actions">
+            @if (item.link) {
+            <a class="details-link" [routerLink]="item.link" (click)="markNotificationRead(item)">View</a>
+            } @if (!item.is_read) {
+            <button class="text-button" type="button" (click)="markNotificationRead(item)">Mark read</button>
+            }
+          </div>
+        </article>
+        } @empty {
+        <p class="policy-note">No notifications yet. Order and payment updates will appear here.</p>
+        }
+      </div>
+    </section>
+
+    <div class="account-settings-grid">
+      <section class="panel-card">
+        <p class="eyebrow">PROFILE DETAILS</p>
+        <h2>Contact information</h2>
+        <form class="stack-form" (ngSubmit)="saveProfile()" novalidate>
+          <label>
+            <span>Display name <span class="required-mark" aria-hidden="true">*</span></span>
+            <input
+              [(ngModel)]="profileName"
+              name="profileName"
+              placeholder="Your full name"
+              [attr.aria-invalid]="fieldErrors['profileName'] ? 'true' : null"
+              required
+              maxlength="120"
+            />
+            @if (fieldErrors['profileName']) {
+            <span class="field-error" role="alert">{{ fieldErrors['profileName'] }}</span>
+            }
+          </label>
+          <label>
+            <span>Phone <span class="optional-mark">(optional)</span></span>
+            <input [(ngModel)]="profilePhone" name="profilePhone" placeholder="e.g. 0917 123 4567" maxlength="40" />
+          </label>
+          <button type="submit" [disabled]="saving">Save profile</button>
+        </form>
+      </section>
+
+      <section class="panel-card">
+        <p class="eyebrow">ACCOUNT SECURITY</p>
+        <h2>Change password</h2>
+        <form class="stack-form" (ngSubmit)="changePassword()" novalidate>
+          <label>
+            <span>Current password <span class="required-mark" aria-hidden="true">*</span></span>
+            <input
+              [(ngModel)]="currentPassword"
+              name="currentPassword"
+              type="password"
+              autocomplete="current-password"
+              placeholder="Enter current password"
+              [attr.aria-invalid]="fieldErrors['currentPassword'] ? 'true' : null"
+              required
+            />
+            @if (fieldErrors['currentPassword']) {
+            <span class="field-error" role="alert">{{ fieldErrors['currentPassword'] }}</span>
+            }
+          </label>
+          <label>
+            <span>New password (12+ chars) <span class="required-mark" aria-hidden="true">*</span></span>
+            <input
+              [(ngModel)]="newPassword"
+              name="newPassword"
+              type="password"
+              autocomplete="new-password"
+              minlength="12"
+              placeholder="At least 12 characters"
+              [attr.aria-invalid]="fieldErrors['newPassword'] ? 'true' : null"
+              required
+            />
+            @if (fieldErrors['newPassword']) {
+            <span class="field-error" role="alert">{{ fieldErrors['newPassword'] }}</span>
+            }
+          </label>
+          <label>
+            <span>Confirm new password <span class="required-mark" aria-hidden="true">*</span></span>
+            <input
+              [(ngModel)]="confirmPassword"
+              name="confirmPassword"
+              type="password"
+              autocomplete="new-password"
+              minlength="12"
+              placeholder="Re-enter new password"
+              [attr.aria-invalid]="fieldErrors['confirmPassword'] ? 'true' : null"
+              required
+            />
+            @if (fieldErrors['confirmPassword']) {
+            <span class="field-error" role="alert">{{ fieldErrors['confirmPassword'] }}</span>
+            }
+          </label>
+          <button type="submit" [disabled]="saving">Update password</button>
+        </form>
+      </section>
+    </div>
     }
   </main>
 </ion-content>

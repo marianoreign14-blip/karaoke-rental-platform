@@ -84,4 +84,20 @@ describe('PlatformPage', () => {
     expect(component.report?.verified_collections_cents).toBe(450000);
     expect(component.unreadNotifications).toBe(1);
   });
+
+  it('pauses 60-second auto-refresh when document is hidden and refreshes when visible', async () => {
+    const refreshSpy = vi.spyOn(component, 'refresh').mockResolvedValue();
+    const visibilitySpy = vi.spyOn(document, 'visibilityState', 'get');
+
+    visibilitySpy.mockReturnValue('hidden');
+    await component.refreshIfVisibleAndIdle();
+    expect(refreshSpy).not.toHaveBeenCalled();
+
+    visibilitySpy.mockReturnValue('visible');
+    await component.refreshIfVisibleAndIdle();
+    expect(refreshSpy).toHaveBeenCalledTimes(1);
+
+    visibilitySpy.mockRestore();
+    component.stopAutoRefresh();
+  });
 });

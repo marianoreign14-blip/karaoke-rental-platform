@@ -12,7 +12,6 @@ import {
   IonInput,
   IonSelect,
   IonSelectOption,
-  IonSpinner,
   IonToolbar,
 } from '@ionic/angular';
 import { firstValueFrom } from 'rxjs';
@@ -21,6 +20,12 @@ import { ApiService, extractApiError } from '../core/api.service';
 import type { Business, OrderDraft, Product, RentalPackage } from '../core/api.service';
 import { CartService } from '../core/cart.service';
 import type { CartEntry } from '../core/cart.service';
+import { BrandMarkComponent } from '../shared/brand-mark.component';
+import { ConfirmDialogService } from '../shared/confirm-dialog.service';
+import { formatRentalDuration } from '../shared/format-duration';
+import { IconComponent } from '../shared/icon.component';
+import { StatusBadgeComponent } from '../shared/status-badge.component';
+import { ToastService } from '../shared/toast.service';
 
 @Component({
   selector: 'app-home',
@@ -40,8 +45,10 @@ import type { CartEntry } from '../core/cart.service';
     IonInput,
     IonSelect,
     IonSelectOption,
-    IonSpinner,
     IonToolbar,
+    BrandMarkComponent,
+    IconComponent,
+    StatusBadgeComponent,
   ],
 })
 export class HomePage implements OnInit {
@@ -50,6 +57,8 @@ export class HomePage implements OnInit {
   private readonly route = inject(ActivatedRoute);
   private readonly destroyRef = inject(DestroyRef);
   private readonly changeDetector = inject(ChangeDetectorRef);
+  private readonly confirmDialog = inject(ConfirmDialogService);
+  private readonly toast = inject(ToastService);
 
   readonly user = this.api.user;
   products: Product[] = [];
@@ -235,16 +244,39 @@ export class HomePage implements OnInit {
     });
   }
 
+  get rentalDurationLabel(): string {
+    return formatRentalDuration(this.startsInput, this.endsInput);
+  }
+
+  stepQuantity(key: string, delta: number): void {
+    const current = this.cart.find((item) => item.key === key)?.quantity ?? 0;
+    this.changeQuantity(key, Math.max(0, current + delta));
+  }
+
   changeQuantity(key: string, value: string | number | null | undefined): void {
     this.cartService.setQuantity(key, value);
     this.clearQuote();
   }
 
-  clearSelection(): void {
+  async clearSelection(): Promise<void> {
+    if (this.cart.length > 0) {
+      const decision = await this.confirmDialog.open({
+        title: 'Clear rental request?',
+        message: 'Remove all selected equipment and packages from your current request?',
+        confirmLabel: 'Clear selection',
+        cancelLabel: 'Keep items',
+        tone: 'danger',
+      });
+      if (!decision.confirmed) {
+        return;
+      }
+    }
     this.cartService.clear();
     this.clearQuote();
     this.error = '';
     this.notice = 'Rental selection cleared.';
+    this.toast.show('Rental selection cleared.', 'info');
+    this.changeDetector.markForCheck();
   }
 
   async calculateQuote(): Promise<void> {
@@ -261,8 +293,10 @@ export class HomePage implements OnInit {
       const quote = await firstValueFrom(this.api.quote(draft));
       this.quoteTotal = quote.total_cents;
       this.lastDraft = draft;
+      this.toast.success('Estimate updated. Review the total and submit when ready.');
     } catch (error) {
       this.error = this.errorMessage(error);
+      this.toast.error(this.error);
     } finally {
       this.quoting = false;
       this.changeDetector.markForCheck();
@@ -296,10 +330,12 @@ export class HomePage implements OnInit {
       this.cartService.clear();
       this.clearQuote();
       this.notice = `Rental request #${order.id} for ${order.business_name} was submitted. View it in My account & orders.`;
+      this.toast.success(`Rental request #${order.id} submitted!`);
       this.loadCatalog();
       void this.loadUnreadCount();
     } catch (error) {
       this.error = this.errorMessage(error);
+      this.toast.error(this.error);
     } finally {
       this.submitting = false;
       this.changeDetector.markForCheck();
@@ -385,10 +421,12 @@ export class HomePage implements OnInit {
     const result = this.cartService.addItem(item);
     if (!result.ok) {
       this.error = result.error;
+      this.toast.warning(result.error);
       return;
     }
     this.error = '';
     this.clearQuote();
+    this.toast.success(`Added ${item.name} to your rental request.`);
   }
 
   private createDraft(): OrderDraft | null {

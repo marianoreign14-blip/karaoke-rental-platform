@@ -1,7 +1,9 @@
 <ion-header class="no-print">
   <header class="topbar">
-    <a class="brand" routerLink="/home">KARAOKE</a>
-    <nav><a routerLink="/home">Marketplace</a><a routerLink="/account">My orders</a></nav>
+    <a class="brand" routerLink="/home" aria-label="KARAOKE home">
+      <app-brand-mark></app-brand-mark>
+    </a>
+    <nav><a routerLink="/home">Marketplace</a><a routerLink="/account" class="active">My orders</a></nav>
   </header>
 </ion-header>
 
@@ -10,12 +12,18 @@
     <div class="top-actions no-print">
       <a class="back-link" routerLink="/account">← Back to my account & orders</a>
       @if (order) {
-      <button type="button" class="secondary-btn" (click)="printReceipt()">Print receipt</button>
+      <button type="button" class="secondary-btn" (click)="printReceipt()">
+        <app-icon name="printer" [size]="15"></app-icon>
+        Print receipt
+      </button>
       }
     </div>
 
     @if (error) {
-    <p class="error" role="alert">{{ error }}</p>
+    <div class="error" role="alert">
+      <span>{{ error }}</span>
+      <button type="button" class="retry-btn" (click)="loadOrder()">Retry</button>
+    </div>
     } @if (notice) {
     <p class="notice" role="status">{{ notice }}</p>
     } @if (loading) {
@@ -26,51 +34,67 @@
         <div>
           <p class="eyebrow">ORDER #{{ order.id }} · RECEIPT & STATUS</p>
           <h1>{{ order.business_name }}</h1>
-          <p class="period">{{ order.starts_at | date: 'medium' }} – {{ order.ends_at | date: 'medium' }}</p>
+          <p class="period">
+            <app-icon name="calendar" [size]="14"></app-icon>
+            {{ order.starts_at | date: 'medium' }} – {{ order.ends_at | date: 'medium' }}
+          </p>
           <a class="store-link no-print" [routerLink]="['/business', order.business_slug]"
             >Visit business storefront →</a
           >
         </div>
         <div class="pills">
-          <span class="pill">{{ order.status.replaceAll('_', ' ') }}</span>
-          <span class="pill muted">{{ order.payment_status.replaceAll('_', ' ') }}</span>
+          <app-status-badge [value]="order.status"></app-status-badge>
+          <app-status-badge [value]="order.payment_status"></app-status-badge>
         </div>
       </header>
 
+      <app-order-progress [status]="order.status" [paymentStatus]="order.payment_status"></app-order-progress>
+
       <div class="section">
         <h2>Rented items</h2>
-        @for (line of order.lines; track line.id) {
-        <div class="line-row">
-          <div>
-            <strong>{{ line.quantity }} × {{ line.name }}</strong>
-            <small>
-              Unit: {{ line.unit_price_cents / 100 | currency: 'PHP' : 'symbol' : '1.2-2' : 'en-PH' }} · {{ line.kind }}
-            </small>
-            @if (line.components.length > 0) {
-            <ul>
-              @for (comp of line.components; track comp.product_id) {
-              <li>{{ comp.quantity }} × {{ comp.name }}</li>
+        <div class="lines-box">
+          @for (line of order.lines; track line.id) {
+          <div class="line-row">
+            <div>
+              <strong>{{ line.quantity }} × {{ line.name }}</strong>
+              <small class="tabular-nums">
+                Unit: {{ line.unit_price_cents / 100 | currency: 'PHP' : 'symbol' : '1.2-2' : 'en-PH' }} · {{ line.kind
+                }}
+              </small>
+              @if (line.components.length > 0) {
+              <ul>
+                @for (comp of line.components; track comp.product_id) {
+                <li>{{ comp.quantity }} × {{ comp.name }}</li>
+                }
+              </ul>
               }
-            </ul>
-            }
+            </div>
+            <strong class="tabular-nums line-amount">
+              {{ line.line_total_cents / 100 | currency: 'PHP' : 'symbol' : '1.2-2' : 'en-PH' }}
+            </strong>
           </div>
-          <strong>{{ line.line_total_cents / 100 | currency: 'PHP' : 'symbol' : '1.2-2' : 'en-PH' }}</strong>
+          }
         </div>
-        }
       </div>
 
       <div class="totals">
         <div>
           <span>Order total</span>
-          <strong>{{ order.total_cents / 100 | currency: 'PHP' : 'symbol' : '1.2-2' : 'en-PH' }}</strong>
+          <strong class="tabular-nums">
+            {{ order.total_cents / 100 | currency: 'PHP' : 'symbol' : '1.2-2' : 'en-PH' }}
+          </strong>
         </div>
         <div>
           <span>Verified paid</span>
-          <strong>{{ order.paid_cents / 100 | currency: 'PHP' : 'symbol' : '1.2-2' : 'en-PH' }}</strong>
+          <strong class="tabular-nums paid-val">
+            {{ order.paid_cents / 100 | currency: 'PHP' : 'symbol' : '1.2-2' : 'en-PH' }}
+          </strong>
         </div>
         <div>
           <span>Remaining balance</span>
-          <strong>{{ order.balance_cents / 100 | currency: 'PHP' : 'symbol' : '1.2-2' : 'en-PH' }}</strong>
+          <strong class="tabular-nums" [class.due-val]="order.balance_cents > 0">
+            {{ order.balance_cents / 100 | currency: 'PHP' : 'symbol' : '1.2-2' : 'en-PH' }}
+          </strong>
         </div>
       </div>
 
@@ -78,6 +102,7 @@
       <div class="actions no-print">
         @if (order.balance_cents > 0) {
         <button type="button" (click)="showPaymentForm = !showPaymentForm">
+          <app-icon name="credit-card" [size]="15"></app-icon>
           {{ showPaymentForm ? 'Hide payment form' : 'Submit payment details' }}
         </button>
         } @if (!hasPendingRequest(order)) {
@@ -92,13 +117,28 @@
       } @if (showPaymentForm) {
       <section class="subpanel no-print">
         <h3>Submit offline payment details</h3>
+        <app-payment-instructions
+          [method]="paymentMethod"
+          [businessName]="order.business_name"
+        ></app-payment-instructions>
         <div class="form-grid">
           <label>
-            Amount (₱)
-            <input type="number" min="0.01" step="0.01" [(ngModel)]="paymentAmount" name="amount" />
+            <span>Amount (₱) <span class="required-mark" aria-hidden="true">*</span></span>
+            <input
+              type="number"
+              min="0.01"
+              step="0.01"
+              placeholder="e.g. 1500.00"
+              [(ngModel)]="paymentAmount"
+              name="amount"
+              [attr.aria-invalid]="fieldErrors['amount'] ? 'true' : null"
+            />
+            @if (fieldErrors['amount']) {
+            <span class="field-error" role="alert">{{ fieldErrors['amount'] }}</span>
+            }
           </label>
           <label>
-            Method
+            <span>Method <span class="required-mark" aria-hidden="true">*</span></span>
             <select [(ngModel)]="paymentMethod" name="method">
               <option value="cash">Cash</option>
               <option value="gcash">GCash</option>
@@ -106,20 +146,33 @@
             </select>
           </label>
           <label>
-            Paid at
-            <input type="datetime-local" [(ngModel)]="paymentDate" name="paidAt" />
+            <span>Paid at <span class="required-mark" aria-hidden="true">*</span></span>
+            <input
+              type="datetime-local"
+              [(ngModel)]="paymentDate"
+              name="paidAt"
+              [attr.aria-invalid]="fieldErrors['paidAt'] ? 'true' : null"
+            />
+            @if (fieldErrors['paidAt']) {
+            <span class="field-error" role="alert">{{ fieldErrors['paidAt'] }}</span>
+            }
           </label>
           <label>
-            Reference number
-            <input [(ngModel)]="paymentReference" name="ref" maxlength="160" />
+            <span>Reference number <span class="optional-mark">(recommended for GCash/Bank)</span></span>
+            <input [(ngModel)]="paymentReference" name="ref" placeholder="e.g. GCASH-90218442" maxlength="160" />
           </label>
         </div>
         <label>
-          Notes
-          <textarea [(ngModel)]="paymentNotes" name="notes" maxlength="1000"></textarea>
+          <span>Notes <span class="optional-mark">(optional)</span></span>
+          <textarea
+            [(ngModel)]="paymentNotes"
+            name="notes"
+            placeholder="Any helpful details for the business"
+            maxlength="1000"
+          ></textarea>
         </label>
         <label>
-          Payment proof image (optional, JPEG/PNG/WebP, 5 MB max)
+          <span>Payment proof image <span class="optional-mark">(optional, JPEG/PNG/WebP, 5 MB max)</span></span>
           <input type="file" accept="image/jpeg,image/png,image/webp" (change)="selectPaymentProof($event)" />
         </label>
         @if (paymentProofPreviewUrl) {
@@ -142,10 +195,12 @@
       @for (payment of order.payments; track payment.id) {
       <div class="entry-row">
         <div>
-          <strong>
-            {{ payment.kind }} · {{ payment.amount_cents / 100 | currency: 'PHP' : 'symbol' : '1.2-2' : 'en-PH' }} · {{
-            payment.status }}
-          </strong>
+          <div class="entry-title">
+            <strong class="tabular-nums">
+              {{ payment.kind }} · {{ payment.amount_cents / 100 | currency: 'PHP' : 'symbol' : '1.2-2' : 'en-PH' }}
+            </strong>
+            <app-status-badge [value]="payment.status"></app-status-badge>
+          </div>
           <small>
             {{ payment.paid_at | date: 'short' }} · {{ payment.method.replaceAll('_', ' ') }} @if
             (payment.reference_number) { · Ref {{ payment.reference_number }} } @if (payment.notes) { · {{ payment.notes
@@ -169,7 +224,10 @@
       @for (req of order.requests; track req.id) {
       <div class="entry-row">
         <div>
-          <strong>{{ req.kind }} · {{ req.status }}</strong>
+          <div class="entry-title">
+            <strong>{{ req.kind }}</strong>
+            <app-status-badge [value]="req.status"></app-status-badge>
+          </div>
           <small>{{ req.reason }} @if (req.decision_note) { · Decision: {{ req.decision_note }} }</small>
         </div>
         <small>{{ req.created_at | date: 'short' }}</small>
@@ -180,14 +238,19 @@
 
     <section class="panel">
       <h2>Order activity timeline</h2>
-      @for (event of order.history; track $index) {
-      <div class="entry-row">
-        <strong>{{ event.action.replaceAll('_', ' ') }}</strong>
-        <small>{{ event.created_at | date: 'short' }} · account #{{ event.actor_id }}</small>
+      <div class="timeline">
+        @for (event of order.history; track $index) {
+        <div class="timeline-row">
+          <span class="timeline-dot" aria-hidden="true"></span>
+          <div class="timeline-body">
+            <strong>{{ event.action.replaceAll('_', ' ') }}</strong>
+            <small>{{ event.created_at | date: 'short' }} · account #{{ event.actor_id }}</small>
+          </div>
+        </div>
+        } @empty {
+        <p class="muted">No activity recorded.</p>
+        }
       </div>
-      } @empty {
-      <p class="muted">No activity recorded.</p>
-      }
     </section>
     }
   </main>

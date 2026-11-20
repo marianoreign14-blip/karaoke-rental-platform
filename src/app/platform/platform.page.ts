@@ -1,9 +1,9 @@
 import { CommonModule, CurrencyPipe, DatePipe } from '@angular/common';
 import { ChangeDetectorRef, Component, inject } from '@angular/core';
-import type { OnInit } from '@angular/core';
+import type { OnDestroy, OnInit } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { Router, RouterLink } from '@angular/router';
-import { IonContent, IonHeader } from '@ionic/angular';
+import { IonContent } from '@ionic/angular';
 import { firstValueFrom } from 'rxjs';
 
 import { ApiService, extractApiError } from '../core/api.service';
@@ -18,6 +18,12 @@ import type {
   Product,
   RentalOrder,
 } from '../core/api.service';
+import { BrandMarkComponent } from '../shared/brand-mark.component';
+import { ConfirmDialogService } from '../shared/confirm-dialog.service';
+import { IconComponent } from '../shared/icon.component';
+import type { IconName } from '../shared/icon.component';
+import { StatusBadgeComponent } from '../shared/status-badge.component';
+import { ToastService } from '../shared/toast.service';
 
 type PlatformSection =
   'businesses' | 'users' | 'products' | 'orders' | 'reports' | 'audit' | 'notifications' | 'settings';
@@ -27,25 +33,112 @@ type PlatformSection =
   templateUrl: './platform.page.html',
   styleUrls: ['./platform.page.scss'],
   standalone: true,
-  imports: [CommonModule, CurrencyPipe, DatePipe, FormsModule, RouterLink, IonContent, IonHeader],
+  imports: [
+    CommonModule,
+    CurrencyPipe,
+    DatePipe,
+    FormsModule,
+    RouterLink,
+    IonContent,
+    BrandMarkComponent,
+    IconComponent,
+    StatusBadgeComponent,
+  ],
 })
-export class PlatformPage implements OnInit {
+export class PlatformPage implements OnInit, OnDestroy {
   private readonly api = inject(ApiService);
   private readonly router = inject(Router);
   private readonly changeDetector = inject(ChangeDetectorRef);
+  private readonly confirmDialog = inject(ConfirmDialogService);
+  private readonly toast = inject(ToastService);
+  fieldErrors: Record<string, string> = {};
 
   readonly currentUser = this.api.user;
-  readonly sections: { id: PlatformSection; label: string }[] = [
-    { id: 'businesses', label: 'Businesses' },
-    { id: 'users', label: 'Users & Customers' },
-    { id: 'products', label: 'Products' },
-    { id: 'orders', label: 'Orders & Payments' },
-    { id: 'reports', label: 'Reports & Analytics' },
-    { id: 'audit', label: 'Audit Logs' },
-    { id: 'notifications', label: 'Notifications' },
-    { id: 'settings', label: 'Settings & Profile' },
+  readonly sections: { id: PlatformSection; label: string; icon: IconName }[] = [
+    { id: 'businesses', label: 'Businesses', icon: 'building' },
+    { id: 'users', label: 'Users & Customers', icon: 'users' },
+    { id: 'products', label: 'Products', icon: 'layers' },
+    { id: 'orders', label: 'Orders & Payments', icon: 'credit-card' },
+    { id: 'reports', label: 'Reports & Analytics', icon: 'bar-chart' },
+    { id: 'audit', label: 'Audit Logs', icon: 'clock' },
+    { id: 'notifications', label: 'Notifications', icon: 'bell' },
+    { id: 'settings', label: 'Settings & Profile', icon: 'settings' },
   ];
   section: PlatformSection = 'businesses';
+  sidebarCollapsed = false;
+  mobileMenuOpen = false;
+  readonly pageSize = 25;
+  usersPage = 1;
+  productsPage = 1;
+  ordersPage = 1;
+  paymentsPage = 1;
+  auditPage = 1;
+
+  get activeSectionLabel(): string {
+    return this.sections.find((item) => item.id === this.section)?.label || 'Platform Administration';
+  }
+
+  selectSection(id: PlatformSection): void {
+    this.section = id;
+    this.mobileMenuOpen = false;
+  }
+
+  get pagedUsers(): PlatformUser[] {
+    const start = (this.usersPage - 1) * this.pageSize;
+    return this.users.slice(start, start + this.pageSize);
+  }
+
+  get usersTotalPages(): number {
+    return Math.max(1, Math.ceil(this.users.length / this.pageSize));
+  }
+
+  get pagedProducts(): Product[] {
+    const start = (this.productsPage - 1) * this.pageSize;
+    return this.products.slice(start, start + this.pageSize);
+  }
+
+  get productsTotalPages(): number {
+    return Math.max(1, Math.ceil(this.products.length / this.pageSize));
+  }
+
+  get pagedOrders(): RentalOrder[] {
+    const start = (this.ordersPage - 1) * this.pageSize;
+    return this.orders.slice(start, start + this.pageSize);
+  }
+
+  get ordersTotalPages(): number {
+    return Math.max(1, Math.ceil(this.orders.length / this.pageSize));
+  }
+
+  get pagedPayments(): PlatformPaymentRecord[] {
+    const start = (this.paymentsPage - 1) * this.pageSize;
+    return this.payments.slice(start, start + this.pageSize);
+  }
+
+  get paymentsTotalPages(): number {
+    return Math.max(1, Math.ceil(this.payments.length / this.pageSize));
+  }
+
+  get pagedActivity(): PlatformAuditLog[] {
+    const start = (this.auditPage - 1) * this.pageSize;
+    return this.filteredActivity.slice(start, start + this.pageSize);
+  }
+
+  get auditTotalPages(): number {
+    return Math.max(1, Math.ceil(this.filteredActivity.length / this.pageSize));
+  }
+
+  businessStatusCount(status: 'all' | Business['status']): number {
+    if (status === 'all') {
+      return this.businesses.length;
+    }
+    return this.businesses.filter((business) => business.status === status).length;
+  }
+
+  reviewPendingBusinesses(): void {
+    this.selectSection('businesses');
+    this.statusFilter = 'pending';
+  }
 
   summary: PlatformSummary | null = null;
   businesses: Business[] = [];
@@ -104,6 +197,7 @@ export class PlatformPage implements OnInit {
     }
     this.profileName = signedIn.display_name;
     this.profilePhone = signedIn.phone || '';
+    this.startAutoRefresh();
     void this.refresh();
   }
 
@@ -112,13 +206,57 @@ export class PlatformPage implements OnInit {
     if (signedIn?.role === 'platform_admin') {
       this.profileName = signedIn.display_name;
       this.profilePhone = signedIn.phone || '';
+      this.startAutoRefresh();
       void this.refresh();
     }
   }
 
+  readonly autoRefreshIntervalMs = 60_000;
+  private autoRefreshTimer: ReturnType<typeof setInterval> | null = null;
+  private readonly handleVisibilityChange = (): void => {
+    if (typeof document !== 'undefined' && document.visibilityState === 'visible') {
+      void this.refreshIfVisibleAndIdle();
+    }
+  };
   private loadGeneration = 0;
 
+  startAutoRefresh(): void {
+    this.stopAutoRefresh();
+    if (typeof document !== 'undefined') {
+      document.addEventListener('visibilitychange', this.handleVisibilityChange);
+    }
+    this.autoRefreshTimer = setInterval(() => {
+      void this.refreshIfVisibleAndIdle();
+    }, this.autoRefreshIntervalMs);
+  }
+
+  stopAutoRefresh(): void {
+    if (this.autoRefreshTimer !== null) {
+      clearInterval(this.autoRefreshTimer);
+      this.autoRefreshTimer = null;
+    }
+    if (typeof document !== 'undefined') {
+      document.removeEventListener('visibilitychange', this.handleVisibilityChange);
+    }
+  }
+
+  async refreshIfVisibleAndIdle(): Promise<void> {
+    if (typeof document !== 'undefined' && document.visibilityState !== 'visible') {
+      return;
+    }
+    if (this.loading || this.saving || !this.api.hasValidSession()) {
+      return;
+    }
+    await this.refresh();
+  }
+
+  ngOnDestroy(): void {
+    this.stopAutoRefresh();
+    this.loadGeneration += 1;
+  }
+
   signOut(): void {
+    this.stopAutoRefresh();
     this.loadGeneration += 1;
     this.summary = null;
     this.businesses = [];
@@ -265,7 +403,15 @@ export class PlatformPage implements OnInit {
 
   async toggleUserActive(user: PlatformUser): Promise<void> {
     const nextState = !user.is_active;
-    if (!window.confirm(`${nextState ? 'Enable' : 'Disable'} account ${user.email}?`)) {
+    const decision = await this.confirmDialog.open({
+      title: nextState ? `Enable ${user.display_name}?` : `Disable ${user.display_name}?`,
+      message: nextState
+        ? `Restore sign-in access for ${user.email}.`
+        : `${user.email} will immediately lose access to sign in across the platform.`,
+      confirmLabel: nextState ? 'Enable account' : 'Disable account',
+      tone: nextState ? 'primary' : 'danger',
+    });
+    if (!decision.confirmed) {
       return;
     }
     this.saving = true;
@@ -274,6 +420,7 @@ export class PlatformPage implements OnInit {
     try {
       await firstValueFrom(this.api.platformSetUserActive(user.id, nextState));
       this.notice = `Account ${user.email} ${nextState ? 'enabled' : 'disabled'}.`;
+      this.toast.success(this.notice);
       await this.loadUsers();
     } catch (error) {
       this.error = this.errorMessage(error);
@@ -304,7 +451,15 @@ export class PlatformPage implements OnInit {
 
   async toggleProductActive(product: Product): Promise<void> {
     const nextState = !product.is_active;
-    if (!window.confirm(`${nextState ? 'Activate' : 'Deactivate'} "${product.name}" (${product.business_name})?`)) {
+    const decision = await this.confirmDialog.open({
+      title: nextState ? `Activate "${product.name}"?` : `Deactivate "${product.name}"?`,
+      message: nextState
+        ? `Make "${product.name}" from ${product.business_name} visible again in the public catalog.`
+        : `Hide "${product.name}" from ${product.business_name} in the public marketplace catalog.`,
+      confirmLabel: nextState ? 'Activate product' : 'Deactivate product',
+      tone: nextState ? 'primary' : 'danger',
+    });
+    if (!decision.confirmed) {
       return;
     }
     this.saving = true;
@@ -313,6 +468,7 @@ export class PlatformPage implements OnInit {
     try {
       await firstValueFrom(this.api.platformSetProductActive(product.id, nextState));
       this.notice = `Product "${product.name}" ${nextState ? 'activated' : 'deactivated'}.`;
+      this.toast.success(this.notice);
       await this.loadProducts();
     } catch (error) {
       this.error = this.errorMessage(error);
@@ -408,7 +564,9 @@ export class PlatformPage implements OnInit {
   }
 
   async saveProfile(): Promise<void> {
+    this.fieldErrors = {};
     if (!this.profileName.trim()) {
+      this.fieldErrors['profileName'] = 'Enter your display name.';
       this.error = 'Display name is required.';
       return;
     }
@@ -422,6 +580,7 @@ export class PlatformPage implements OnInit {
       this.profileName = updated.display_name;
       this.profilePhone = updated.phone || '';
       this.notice = 'Platform administrator profile updated.';
+      this.toast.success(this.notice);
     } catch (error) {
       this.error = this.errorMessage(error);
     } finally {
@@ -431,18 +590,20 @@ export class PlatformPage implements OnInit {
   }
 
   async changePassword(): Promise<void> {
+    this.fieldErrors = {};
     this.error = '';
     this.notice = '';
     if (!this.currentPassword) {
-      this.error = 'Enter your current password.';
-      return;
+      this.fieldErrors['currentPassword'] = 'Enter your current password.';
     }
     if (this.newPassword.length < 12) {
-      this.error = 'New password must be at least 12 characters.';
-      return;
+      this.fieldErrors['newPassword'] = 'Use at least 12 characters.';
     }
     if (this.newPassword !== this.confirmPassword) {
-      this.error = 'New password confirmation does not match.';
+      this.fieldErrors['confirmPassword'] = 'Password confirmation does not match.';
+    }
+    if (Object.keys(this.fieldErrors).length > 0) {
+      this.error = 'Please fix the highlighted password fields below.';
       return;
     }
     this.saving = true;
@@ -452,6 +613,7 @@ export class PlatformPage implements OnInit {
       this.newPassword = '';
       this.confirmPassword = '';
       this.notice = response.message;
+      this.toast.success(this.notice);
     } catch (error) {
       this.error = this.errorMessage(error);
     } finally {
@@ -461,16 +623,41 @@ export class PlatformPage implements OnInit {
   }
 
   async changeStatus(business: Business, status: 'active' | 'suspended' | 'rejected'): Promise<void> {
-    const note = window.prompt(status === 'active' ? 'Approval note (optional)' : `Note for ${status} (optional)`, '');
-    if (note === null) {
+    const actionLabel =
+      status === 'active'
+        ? business.status === 'suspended'
+          ? 'Reactivate'
+          : 'Approve'
+        : status === 'suspended'
+          ? 'Suspend'
+          : 'Reject';
+    const messageMap: Record<'active' | 'suspended' | 'rejected', string> = {
+      active:
+        business.status === 'suspended'
+          ? `Restore ${business.name} to active status so the business owner and staff can resume operations.`
+          : `Approve ${business.name} so the owner can sign in, publish equipment, and receive customer bookings.`,
+      suspended: `Suspend ${business.name} and temporarily hide its storefront from customers.`,
+      rejected: `Reject the application for ${business.name}. The applicant will remain blocked from the owner portal.`,
+    };
+    const decision = await this.confirmDialog.open({
+      title: `${actionLabel} ${business.name}?`,
+      message: messageMap[status],
+      confirmLabel: `${actionLabel} business`,
+      tone: status === 'active' ? 'primary' : 'danger',
+      inputLabel: status === 'active' ? 'Approval note (optional)' : `Reason for ${status} (optional)`,
+      inputPlaceholder:
+        status === 'active' ? 'Optional welcome or review note' : 'Add context for this moderation decision',
+    });
+    if (!decision.confirmed) {
       return;
     }
     this.saving = true;
     this.error = '';
     this.notice = '';
     try {
-      await firstValueFrom(this.api.setBusinessStatus(business.id, status, note.trim() || null));
+      await firstValueFrom(this.api.setBusinessStatus(business.id, status, decision.note || null));
       this.notice = `${business.name} is now ${status}.`;
+      this.toast.success(this.notice);
       await this.refresh();
     } catch (error) {
       this.error = this.errorMessage(error);
@@ -481,12 +668,24 @@ export class PlatformPage implements OnInit {
   }
 
   async toggleListing(business: Business): Promise<void> {
+    if (business.is_listed) {
+      const decision = await this.confirmDialog.open({
+        title: `Hide ${business.name} from marketplace?`,
+        message: `Customers will no longer see ${business.name} in the public marketplace directory until you publish its listing again.`,
+        confirmLabel: 'Hide listing',
+        tone: 'danger',
+      });
+      if (!decision.confirmed) {
+        return;
+      }
+    }
     this.saving = true;
     this.error = '';
     this.notice = '';
     try {
       await firstValueFrom(this.api.setBusinessListing(business.id, !business.is_listed));
       this.notice = `${business.name} ${business.is_listed ? 'removed from' : 'listed on'} the marketplace.`;
+      this.toast.success(this.notice);
       await this.refresh();
     } catch (error) {
       this.error = this.errorMessage(error);
@@ -531,6 +730,7 @@ export class PlatformPage implements OnInit {
         }),
       );
       this.notice = 'Subscription details updated.';
+      this.toast.success(this.notice);
       this.subscriptionBusinessId = null;
       await this.refresh();
     } catch (error) {
@@ -548,6 +748,7 @@ export class PlatformPage implements OnInit {
     try {
       await firstValueFrom(this.api.updatePlatformSetting(key, (this.settings[key] || '').trim()));
       this.notice = 'Platform setting saved.';
+      this.toast.success(this.notice);
       await this.refresh();
     } catch (error) {
       this.error = this.errorMessage(error);
@@ -558,9 +759,22 @@ export class PlatformPage implements OnInit {
   }
 
   async createBusinessAdmin(): Promise<void> {
+    this.fieldErrors = {};
     const businessId = Number(this.adminBusinessId);
-    if (!businessId || !this.adminEmail.trim() || !this.adminName.trim() || this.adminPassword.length < 12) {
-      this.error = 'Select an active business and enter a name, email, and password of at least 12 characters.';
+    if (!businessId) {
+      this.fieldErrors['adminBusiness'] = 'Select an active business.';
+    }
+    if (!this.adminName.trim()) {
+      this.fieldErrors['adminName'] = 'Enter the administrator’s full name.';
+    }
+    if (!this.adminEmail.trim() || !this.adminEmail.includes('@')) {
+      this.fieldErrors['adminEmail'] = 'Enter a valid email address.';
+    }
+    if (this.adminPassword.length < 12) {
+      this.fieldErrors['adminPassword'] = 'Use at least 12 characters.';
+    }
+    if (Object.keys(this.fieldErrors).length > 0) {
+      this.error = 'Please fix the highlighted fields below.';
       return;
     }
     this.saving = true;
@@ -576,6 +790,7 @@ export class PlatformPage implements OnInit {
         }),
       );
       this.notice = 'Business administrator created.';
+      this.toast.success(this.notice);
       this.adminBusinessId = '';
       this.adminEmail = '';
       this.adminName = '';

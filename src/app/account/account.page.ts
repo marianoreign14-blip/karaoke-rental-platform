@@ -16,6 +16,13 @@ import type {
   RentalPackage,
   User,
 } from '../core/api.service';
+import { BrandMarkComponent } from '../shared/brand-mark.component';
+import { ConfirmDialogService } from '../shared/confirm-dialog.service';
+import { IconComponent } from '../shared/icon.component';
+import { OrderProgressComponent } from '../shared/order-progress.component';
+import { PaymentInstructionsComponent } from '../shared/payment-instructions.component';
+import { StatusBadgeComponent } from '../shared/status-badge.component';
+import { ToastService } from '../shared/toast.service';
 
 type SelectableItem = { key: string; kind: 'product' | 'package'; item_id: number; label: string };
 type OrderFilter = 'all' | 'active' | 'completed' | 'closed';
@@ -36,12 +43,21 @@ type OrderFilter = 'all' | 'active' | 'completed' | 'closed';
     IonSelect,
     IonSelectOption,
     IonSpinner,
+    BrandMarkComponent,
+    IconComponent,
+    OrderProgressComponent,
+    PaymentInstructionsComponent,
+    StatusBadgeComponent,
   ],
 })
 export class AccountPage implements OnInit, OnDestroy {
   private readonly api = inject(ApiService);
   private readonly router = inject(Router);
   private readonly changeDetector = inject(ChangeDetectorRef);
+  private readonly confirmDialog = inject(ConfirmDialogService);
+  private readonly toast = inject(ToastService);
+
+  fieldErrors: Record<string, string> = {};
 
   user: User | null = this.api.user();
   businessApplication: BusinessApplication | null = null;
@@ -204,20 +220,22 @@ export class AccountPage implements OnInit, OnDestroy {
   async authenticate(): Promise<void> {
     this.error = '';
     this.notice = '';
+    this.fieldErrors = {};
     const email = this.email.trim();
-    if (!email || !this.password) {
-      this.error = 'Enter your email address and password.';
-      return;
+    if (this.mode === 'register' && !this.displayName.trim()) {
+      this.fieldErrors['displayName'] = 'Please enter your full name.';
     }
-    if (this.mode === 'register') {
-      if (!this.displayName.trim()) {
-        this.error = 'Enter your full name.';
-        return;
-      }
-      if (this.password.length < 12) {
-        this.error = 'Password must be at least 12 characters.';
-        return;
-      }
+    if (!email || !email.includes('@')) {
+      this.fieldErrors['email'] = 'Enter a valid email address (for example, name@example.com).';
+    }
+    if (!this.password) {
+      this.fieldErrors['password'] = 'Enter your password.';
+    } else if (this.mode === 'register' && this.password.length < 12) {
+      this.fieldErrors['password'] = 'Password must be at least 12 characters.';
+    }
+    if (Object.keys(this.fieldErrors).length > 0) {
+      this.error = 'Please review the highlighted fields below.';
+      return;
     }
     this.saving = true;
     try {
@@ -245,6 +263,7 @@ export class AccountPage implements OnInit, OnDestroy {
       } else {
         void this.loadAccount();
         this.notice = 'You are signed in.';
+        this.toast.success(this.mode === 'register' ? 'Account created. Welcome!' : 'Signed in successfully.');
       }
     } catch (error) {
       this.error = this.errorMessage(error);
@@ -324,7 +343,9 @@ export class AccountPage implements OnInit, OnDestroy {
   }
 
   async saveProfile(): Promise<void> {
+    this.fieldErrors = {};
     if (!this.profileName.trim()) {
+      this.fieldErrors['profileName'] = 'Display name is required.';
       this.error = 'Display name is required.';
       return;
     }
@@ -336,6 +357,7 @@ export class AccountPage implements OnInit, OnDestroy {
         this.api.updateProfile(this.profileName.trim(), this.profilePhone.trim() || null),
       );
       this.notice = 'Profile updated.';
+      this.toast.success('Your contact profile has been saved.');
     } catch (error) {
       this.error = this.errorMessage(error);
     } finally {
@@ -347,16 +369,18 @@ export class AccountPage implements OnInit, OnDestroy {
   async changePassword(): Promise<void> {
     this.error = '';
     this.notice = '';
+    this.fieldErrors = {};
     if (!this.currentPassword) {
-      this.error = 'Enter your current password.';
-      return;
+      this.fieldErrors['currentPassword'] = 'Enter your current password.';
     }
     if (this.newPassword.length < 12) {
-      this.error = 'New password must be at least 12 characters.';
-      return;
+      this.fieldErrors['newPassword'] = 'New password must be at least 12 characters.';
     }
     if (this.newPassword !== this.confirmPassword) {
-      this.error = 'New password confirmation does not match.';
+      this.fieldErrors['confirmPassword'] = 'Password confirmation does not match.';
+    }
+    if (Object.keys(this.fieldErrors).length > 0) {
+      this.error = Object.values(this.fieldErrors)[0];
       return;
     }
     this.saving = true;
@@ -366,6 +390,7 @@ export class AccountPage implements OnInit, OnDestroy {
       this.newPassword = '';
       this.confirmPassword = '';
       this.notice = response.message;
+      this.toast.success('Password updated. Your session remains active.');
     } catch (error) {
       this.error = this.errorMessage(error);
     } finally {
@@ -489,6 +514,7 @@ export class AccountPage implements OnInit, OnDestroy {
       );
       this.notice =
         'Change request sent. Your current order and inventory reservation remain unchanged until administrator review.';
+      this.toast.success('Booking change request sent for business review.');
       this.editingOrderId = null;
       await this.loadAccount();
     } catch (error) {
@@ -500,8 +526,16 @@ export class AccountPage implements OnInit, OnDestroy {
   }
 
   async requestCancellation(order: RentalOrder): Promise<void> {
-    const reason = window.prompt('Why are you requesting cancellation?');
-    if (reason === null) {
+    const decision = await this.confirmDialog.open({
+      title: `Cancel Order #${order.id}?`,
+      message: `Your cancellation request will be sent to ${order.business_name}. Reserved equipment stays held until the business approves the cancellation.`,
+      confirmLabel: 'Send cancellation request',
+      cancelLabel: 'Keep booking',
+      tone: 'danger',
+      inputLabel: 'Reason for cancelling (optional)',
+      inputPlaceholder: 'e.g. Event date changed or no longer needed',
+    });
+    if (!decision.confirmed) {
       return;
     }
     this.saving = true;
@@ -510,10 +544,11 @@ export class AccountPage implements OnInit, OnDestroy {
       await firstValueFrom(
         this.api.orderRequest(order.id, {
           kind: 'cancellation',
-          reason: reason.trim() || 'Customer requested cancellation',
+          reason: decision.note || 'Customer requested cancellation',
         }),
       );
       this.notice = 'Cancellation request sent. Inventory remains reserved until an administrator approves it.';
+      this.toast.success('Cancellation request sent to the business.');
       await this.loadAccount();
     } catch (error) {
       this.error = this.errorMessage(error);
@@ -539,19 +574,18 @@ export class AccountPage implements OnInit, OnDestroy {
   }
 
   async submitPayment(): Promise<void> {
+    this.fieldErrors = {};
     const rawAmount = String(this.paymentAmount ?? '').trim();
-    if (!this.paymentOrderId || !rawAmount || !this.paymentDate) {
-      this.error = 'Enter a payment amount and payment date.';
-      return;
-    }
     const amount = Number(rawAmount);
     const paidAt = new Date(this.paymentDate);
-    if (!Number.isFinite(amount) || amount <= 0) {
-      this.error = 'Enter a valid payment amount.';
-      return;
+    if (!rawAmount || !Number.isFinite(amount) || amount <= 0) {
+      this.fieldErrors['paymentAmount'] = 'Enter a valid payment amount greater than ₱0.00.';
     }
-    if (Number.isNaN(paidAt.getTime())) {
-      this.error = 'Enter a valid payment date.';
+    if (!this.paymentDate || Number.isNaN(paidAt.getTime())) {
+      this.fieldErrors['paymentDate'] = 'Select the date and time you paid.';
+    }
+    if (!this.paymentOrderId || Object.keys(this.fieldErrors).length > 0) {
+      this.error = Object.values(this.fieldErrors)[0] || 'Enter a payment amount and payment date.';
       return;
     }
     this.saving = true;
@@ -572,6 +606,7 @@ export class AccountPage implements OnInit, OnDestroy {
         return;
       }
       this.notice = 'Payment information submitted. It will appear as paid only after an administrator verifies it.';
+      this.toast.success('Payment details sent for business verification.');
       this.paymentOrderId = null;
       this.resetPaymentForm();
       await this.loadAccount();

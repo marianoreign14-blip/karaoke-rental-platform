@@ -9,19 +9,44 @@ import { firstValueFrom } from 'rxjs';
 
 import { ApiService, extractApiError } from '../core/api.service';
 import type { PaymentEntry, RentalOrder } from '../core/api.service';
+import { BrandMarkComponent } from '../shared/brand-mark.component';
+import { ConfirmDialogService } from '../shared/confirm-dialog.service';
+import { IconComponent } from '../shared/icon.component';
+import { OrderProgressComponent } from '../shared/order-progress.component';
+import { PaymentInstructionsComponent } from '../shared/payment-instructions.component';
+import { StatusBadgeComponent } from '../shared/status-badge.component';
+import { ToastService } from '../shared/toast.service';
 
 @Component({
   selector: 'app-order-detail',
   templateUrl: './order-detail.page.html',
   styleUrls: ['./order-detail.page.scss'],
   standalone: true,
-  imports: [CommonModule, CurrencyPipe, DatePipe, FormsModule, RouterLink, IonContent, IonHeader, IonSpinner],
+  imports: [
+    CommonModule,
+    CurrencyPipe,
+    DatePipe,
+    FormsModule,
+    RouterLink,
+    IonContent,
+    IonHeader,
+    IonSpinner,
+    BrandMarkComponent,
+    IconComponent,
+    OrderProgressComponent,
+    PaymentInstructionsComponent,
+    StatusBadgeComponent,
+  ],
 })
 export class OrderDetailPage implements OnInit, OnDestroy {
   private readonly api = inject(ApiService);
   private readonly route = inject(ActivatedRoute);
   private readonly destroyRef = inject(DestroyRef);
   private readonly changeDetector = inject(ChangeDetectorRef);
+  private readonly confirmDialog = inject(ConfirmDialogService);
+  private readonly toast = inject(ToastService);
+
+  fieldErrors: Record<string, string> = {};
 
   order: RentalOrder | null = null;
   loading = false;
@@ -89,8 +114,16 @@ export class OrderDetailPage implements OnInit, OnDestroy {
     if (!this.order) {
       return;
     }
-    const reason = window.prompt('Why are you requesting cancellation?');
-    if (reason === null) {
+    const decision = await this.confirmDialog.open({
+      title: `Cancel Order #${this.order.id}?`,
+      message: `Your cancellation request will be sent to ${this.order.business_name}. Reserved equipment stays held until the business approves the cancellation.`,
+      confirmLabel: 'Send cancellation request',
+      cancelLabel: 'Keep booking',
+      tone: 'danger',
+      inputLabel: 'Reason for cancelling (optional)',
+      inputPlaceholder: 'e.g. Event date changed or no longer needed',
+    });
+    if (!decision.confirmed) {
       return;
     }
     this.saving = true;
@@ -99,10 +132,11 @@ export class OrderDetailPage implements OnInit, OnDestroy {
       await firstValueFrom(
         this.api.orderRequest(this.order.id, {
           kind: 'cancellation',
-          reason: reason.trim() || 'Customer requested cancellation',
+          reason: decision.note || 'Customer requested cancellation',
         }),
       );
       this.notice = 'Cancellation request sent. Inventory remains reserved until approved by the business.';
+      this.toast.success('Cancellation request sent.');
       await this.loadOrder();
     } catch (error) {
       this.error = extractApiError(error, 'Could not submit cancellation request.');
@@ -138,11 +172,18 @@ export class OrderDetailPage implements OnInit, OnDestroy {
     if (!this.order) {
       return;
     }
+    this.fieldErrors = {};
     const rawAmount = String(this.paymentAmount ?? '').trim();
     const amount = Number(rawAmount);
     const paidAt = new Date(this.paymentDate);
-    if (!rawAmount || !Number.isFinite(amount) || amount <= 0 || Number.isNaN(paidAt.getTime())) {
-      this.error = 'Enter a valid payment amount and date.';
+    if (!rawAmount || !Number.isFinite(amount) || amount <= 0) {
+      this.fieldErrors['amount'] = 'Enter a valid payment amount greater than ₱0.00.';
+    }
+    if (!this.paymentDate || Number.isNaN(paidAt.getTime())) {
+      this.fieldErrors['paidAt'] = 'Select the date and time you paid.';
+    }
+    if (Object.keys(this.fieldErrors).length > 0) {
+      this.error = Object.values(this.fieldErrors)[0];
       return;
     }
     this.saving = true;
@@ -163,6 +204,7 @@ export class OrderDetailPage implements OnInit, OnDestroy {
         return;
       }
       this.finishPaymentSubmission('Payment details submitted for business verification.');
+      this.toast.success('Payment details submitted for business verification.');
       await this.loadOrder();
     } catch (error) {
       this.error = extractApiError(error, 'Could not submit payment details.');

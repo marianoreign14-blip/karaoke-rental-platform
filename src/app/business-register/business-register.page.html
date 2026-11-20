@@ -1,6 +1,8 @@
 <ion-header>
   <header class="topbar">
-    <a class="brand" routerLink="/home">KARAOKE</a>
+    <a class="brand" routerLink="/home" aria-label="KARAOKE home">
+      <app-brand-mark></app-brand-mark>
+    </a>
     <nav><a routerLink="/home">Marketplace</a><a routerLink="/account">Sign in</a></nav>
   </header>
 </ion-header>
@@ -20,24 +22,43 @@
       } @if (notice) {
       <p class="message notice" role="status">{{ notice }}</p>
       } @if (!notice) {
-      <form (ngSubmit)="submit()">
+      <form (ngSubmit)="submit()" novalidate>
+        <p class="form-section-title">Business & owner details</p>
         <label>
-          Business name
+          <span>Business name <span class="required-mark" aria-hidden="true">*</span></span>
           <input
             [(ngModel)]="businessName"
             name="businessName"
             autocomplete="organization"
             minlength="2"
             maxlength="160"
+            placeholder="e.g. Metro Sound Rentals"
+            [attr.aria-invalid]="fieldErrors['businessName'] ? 'true' : null"
             required
           />
+          @if (fieldErrors['businessName']) {
+          <span class="field-error" role="alert">{{ fieldErrors['businessName'] }}</span>
+          }
         </label>
         <label>
-          Owner name
-          <input [(ngModel)]="ownerName" name="ownerName" autocomplete="name" maxlength="120" required />
+          <span>Owner name <span class="required-mark" aria-hidden="true">*</span></span>
+          <input
+            [(ngModel)]="ownerName"
+            name="ownerName"
+            autocomplete="name"
+            maxlength="120"
+            placeholder="Full name"
+            [attr.aria-invalid]="fieldErrors['ownerName'] ? 'true' : null"
+            required
+          />
+          @if (fieldErrors['ownerName']) {
+          <span class="field-error" role="alert">{{ fieldErrors['ownerName'] }}</span>
+          }
         </label>
+
+        <p class="form-section-title">Contact & location</p>
         <label>
-          Email
+          <span>Email <span class="required-mark" aria-hidden="true">*</span></span>
           <input
             [(ngModel)]="email"
             name="email"
@@ -45,11 +66,16 @@
             autocomplete="email"
             autocapitalize="off"
             maxlength="320"
+            placeholder="owner@business.com"
+            [attr.aria-invalid]="fieldErrors['email'] ? 'true' : null"
             required
           />
+          @if (fieldErrors['email']) {
+          <span class="field-error" role="alert">{{ fieldErrors['email'] }}</span>
+          }
         </label>
         <label>
-          Contact number
+          <span>Contact number <span class="required-mark" aria-hidden="true">*</span></span>
           <input
             [(ngModel)]="contactNumber"
             name="contactNumber"
@@ -57,11 +83,16 @@
             autocomplete="tel"
             minlength="7"
             maxlength="40"
+            placeholder="0917 000 0000"
+            [attr.aria-invalid]="fieldErrors['contactNumber'] ? 'true' : null"
             required
           />
+          @if (fieldErrors['contactNumber']) {
+          <span class="field-error" role="alert">{{ fieldErrors['contactNumber'] }}</span>
+          }
         </label>
         <label class="wide">
-          Business address
+          <span>Business address <span class="required-mark" aria-hidden="true">*</span></span>
           <textarea
             [(ngModel)]="address"
             name="address"
@@ -69,11 +100,20 @@
             minlength="5"
             maxlength="500"
             rows="3"
+            placeholder="Street address, barangay, city"
+            [attr.aria-invalid]="fieldErrors['address'] ? 'true' : null"
             required
           ></textarea>
+          @if (fieldErrors['address']) {
+          <span class="field-error" role="alert">{{ fieldErrors['address'] }}</span>
+          }
         </label>
+
+        <p class="form-section-title">Account security</p>
         <div class="wide password-field">
-          <label for="business-password">Password</label>
+          <label for="business-password"
+            ><span>Password <span class="required-mark" aria-hidden="true">*</span></span></label
+          >
           <div class="password-control">
             <input
               id="business-password"
@@ -83,6 +123,8 @@
               autocomplete="new-password"
               minlength="12"
               maxlength="128"
+              placeholder="At least 12 characters"
+              [attr.aria-invalid]="fieldErrors['password'] ? 'true' : null"
               required
             />
             <button
@@ -95,6 +137,9 @@
               {{ showPassword ? 'Hide' : 'Show' }}
             </button>
           </div>
+          @if (fieldErrors['password']) {
+          <span class="field-error" role="alert">{{ fieldErrors['password'] }}</span>
+          }
           <small>Use at least 12 characters. Your password is stored as a secure hash.</small>
         </div>
         <button class="submit-button wide" type="submit" [disabled]="saving">

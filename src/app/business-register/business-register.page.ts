@@ -6,17 +6,20 @@ import { IonContent, IonHeader } from '@ionic/angular';
 import { firstValueFrom } from 'rxjs';
 
 import { ApiService, extractApiError } from '../core/api.service';
+import { BrandMarkComponent } from '../shared/brand-mark.component';
+import { ToastService } from '../shared/toast.service';
 
 @Component({
   selector: 'app-business-register',
   templateUrl: './business-register.page.html',
   styleUrls: ['./business-register.page.scss'],
   standalone: true,
-  imports: [CommonModule, FormsModule, RouterLink, IonContent, IonHeader],
+  imports: [CommonModule, FormsModule, RouterLink, IonContent, IonHeader, BrandMarkComponent],
 })
 export class BusinessRegisterPage {
   private readonly api = inject(ApiService);
   private readonly changeDetector = inject(ChangeDetectorRef);
+  private readonly toast = inject(ToastService);
 
   businessName = '';
   ownerName = '';
@@ -28,10 +31,12 @@ export class BusinessRegisterPage {
   saving = false;
   error = '';
   notice = '';
+  fieldErrors: Record<string, string> = {};
 
   async submit(): Promise<void> {
     this.error = '';
     this.notice = '';
+    this.fieldErrors = {};
     const businessName = this.businessName.trim();
     const ownerName = this.ownerName.trim();
     const email = this.email.trim();
@@ -39,27 +44,25 @@ export class BusinessRegisterPage {
     const address = this.address.trim();
 
     if (businessName.length < 2) {
-      this.error = 'Business name must be at least 2 characters.';
-      return;
+      this.fieldErrors['businessName'] = 'Business name must be at least 2 characters.';
     }
     if (!ownerName) {
-      this.error = 'Owner name is required.';
-      return;
+      this.fieldErrors['ownerName'] = 'Owner full name is required.';
     }
-    if (!email) {
-      this.error = 'A valid email address is required.';
-      return;
+    if (!email || !email.includes('@')) {
+      this.fieldErrors['email'] = 'Enter a valid email address.';
     }
     if (contactNumber.length < 7) {
-      this.error = 'Contact number must be at least 7 characters.';
-      return;
+      this.fieldErrors['contactNumber'] = 'Contact number must be at least 7 digits/characters.';
     }
     if (address.length < 5) {
-      this.error = 'Business address must be at least 5 characters.';
-      return;
+      this.fieldErrors['address'] = 'Enter a complete street or city address (at least 5 characters).';
     }
     if (this.password.length < 12) {
-      this.error = 'Password must be at least 12 characters.';
+      this.fieldErrors['password'] = 'Password must be at least 12 characters.';
+    }
+    if (Object.keys(this.fieldErrors).length > 0) {
+      this.error = 'Please fix the highlighted fields before submitting.';
       return;
     }
 
@@ -76,6 +79,7 @@ export class BusinessRegisterPage {
         }),
       );
       this.notice = result.message;
+      this.toast.success('Business application submitted for review.');
       this.businessName = '';
       this.ownerName = '';
       this.email = '';

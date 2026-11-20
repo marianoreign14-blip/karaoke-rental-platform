@@ -10,13 +10,30 @@ import { firstValueFrom } from 'rxjs';
 import { ApiService, extractApiError } from '../core/api.service';
 import type { ProductDetail } from '../core/api.service';
 import { CartService } from '../core/cart.service';
+import { BrandMarkComponent } from '../shared/brand-mark.component';
+import { formatRentalDuration } from '../shared/format-duration';
+import { IconComponent } from '../shared/icon.component';
+import { StatusBadgeComponent } from '../shared/status-badge.component';
+import { ToastService } from '../shared/toast.service';
 
 @Component({
   selector: 'app-product-detail',
   templateUrl: './product-detail.page.html',
   styleUrls: ['./product-detail.page.scss'],
   standalone: true,
-  imports: [CommonModule, FormsModule, RouterLink, IonBadge, IonButton, IonContent, IonHeader, IonSpinner],
+  imports: [
+    CommonModule,
+    FormsModule,
+    RouterLink,
+    IonBadge,
+    IonButton,
+    IonContent,
+    IonHeader,
+    IonSpinner,
+    BrandMarkComponent,
+    IconComponent,
+    StatusBadgeComponent,
+  ],
 })
 export class ProductDetailPage implements OnInit {
   private readonly api = inject(ApiService);
@@ -25,6 +42,7 @@ export class ProductDetailPage implements OnInit {
   private readonly router = inject(Router);
   private readonly destroyRef = inject(DestroyRef);
   private readonly changeDetector = inject(ChangeDetectorRef);
+  private readonly toast = inject(ToastService);
 
   readonly cartCount = this.cart.count;
   product: ProductDetail | null = null;
@@ -35,6 +53,10 @@ export class ProductDetailPage implements OnInit {
   error = '';
   notice = '';
   private productId = 0;
+
+  get rentalDurationLabel(): string {
+    return formatRentalDuration(this.startsInput, this.endsInput);
+  }
 
   get rentalWindowError(): string {
     if (!this.startsInput || !this.endsInput) {
@@ -124,6 +146,7 @@ export class ProductDetailPage implements OnInit {
     }
     this.error = '';
     this.notice = `Added ${qty} × ${this.product.name} to your rental request.`;
+    this.toast.success(this.notice);
   }
 
   goToCheckout(): void {

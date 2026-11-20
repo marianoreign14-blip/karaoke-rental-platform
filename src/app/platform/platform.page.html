@@ -1,702 +1,1108 @@
-<ion-header>
-  <header class="topbar">
-    <a class="brand" routerLink="/home">KARAOKE</a>
-    <nav>
-      <a routerLink="/home">Marketplace</a>
-      <button type="button" class="nav-signout" (click)="signOut()">Sign out</button>
-    </nav>
-  </header>
-</ion-header>
-
 <ion-content>
-  <main>
-    <section class="page-heading">
-      <div>
-        <p class="eyebrow">PLATFORM ADMINISTRATION</p>
-        <h1>Marketplace control center</h1>
-        <p>Review businesses, monitor users, products, orders, payments, analytics, and platform defaults.</p>
-      </div>
-      <button type="button" class="secondary-button" (click)="refresh()" [disabled]="loading">
-        {{ loading ? 'Refreshing…' : 'Refresh data' }}
-      </button>
-    </section>
+  <div class="saas-shell" [class.sidebar-collapsed]="sidebarCollapsed">
+    <button
+      type="button"
+      class="saas-backdrop"
+      [class.visible]="mobileMenuOpen"
+      aria-label="Close navigation menu"
+      (click)="mobileMenuOpen = false"
+    ></button>
 
-    @if (error) {
-    <p class="message error" role="alert">{{ error }}</p>
-    } @if (notice) {
-    <p class="message notice" role="status">{{ notice }}</p>
-    } @if (summary) {
-    <section class="stats-grid" aria-label="Platform statistics">
-      <article><span>Total businesses</span><strong>{{ summary.businesses }}</strong></article>
-      <article><span>Active businesses</span><strong>{{ summary.active_businesses }}</strong></article>
-      <article><span>Awaiting approval</span><strong>{{ summary.pending_businesses }}</strong></article>
-      <article><span>Customers</span><strong>{{ summary.customers }}</strong></article>
-      <article><span>Rental requests</span><strong>{{ summary.orders }}</strong></article>
-    </section>
-    }
-
-    <nav class="platform-section-nav" aria-label="Platform administration sections">
-      @for (item of sections; track item.id) {
-      <button type="button" [class.active]="section === item.id" (click)="section = item.id">
-        {{ item.label }} @if (item.id === 'notifications' && unreadNotifications > 0) {
-        <span class="unread-pill">{{ unreadNotifications }}</span>
-        }
-      </button>
-      }
-    </nav>
-
-    @switch (section) { @case ('businesses') {
-    <section class="panel">
-      <div class="section-heading">
-        <div>
-          <p class="eyebrow">TENANT DIRECTORY</p>
-          <h2>Registered businesses & applications</h2>
-        </div>
-        <div class="directory-filters">
-          <input
-            [(ngModel)]="search"
-            name="businessSearch"
-            type="search"
-            placeholder="Search business or owner"
-            aria-label="Search businesses"
-          />
-          <select [(ngModel)]="statusFilter" name="statusFilter" aria-label="Filter business status">
-            <option value="all">All statuses</option>
-            <option value="pending">Pending</option>
-            <option value="active">Active</option>
-            <option value="suspended">Suspended</option>
-            <option value="rejected">Rejected</option>
-          </select>
-        </div>
-      </div>
-      <div class="business-list">
-        @for (business of filteredBusinesses; track business.id) {
-        <article class="business-card">
-          <div class="business-heading">
-            @if (business.logo_url) {
-            <img [src]="business.logo_url" [alt]="business.name + ' logo'" (error)="hideBrokenImage($event)" />
-            }
-            <div>
-              <h3>{{ business.name }}</h3>
-              <p>{{ business.owner_name || 'No owner record' }} · {{ business.owner_email || 'No email' }}</p>
-              <small>Created {{ business.created_at | date: 'mediumDate' }} · {{ business.slug }}</small>
-            </div>
-            <div class="state-tags">
-              <span class="tag" [class.pending]="business.status === 'pending'">{{ business.status }}</span>
-              <span class="tag">{{ business.subscription_plan }} · {{ business.subscription_status }}</span>
-              <span class="tag">{{ business.is_listed ? 'Listed' : 'Hidden' }}</span>
-            </div>
-          </div>
-          <p class="business-description">{{ business.description || 'No storefront description provided.' }}</p>
-          <div class="business-actions">
-            @if (business.status === 'pending') {
-            <button type="button" (click)="changeStatus(business, 'active')" [disabled]="saving">Approve</button>
-            <button
-              type="button"
-              class="danger-button"
-              (click)="changeStatus(business, 'rejected')"
-              [disabled]="saving"
-            >
-              Reject
-            </button>
-            } @if (business.status === 'active') {
-            <a class="secondary-button" [routerLink]="['/business', business.slug]">View storefront</a>
-            <button type="button" class="secondary-button" (click)="toggleListing(business)" [disabled]="saving">
-              {{ business.is_listed ? 'Hide listing' : 'Publish listing' }}
-            </button>
-            <button
-              type="button"
-              class="danger-button"
-              (click)="changeStatus(business, 'suspended')"
-              [disabled]="saving"
-            >
-              Suspend
-            </button>
-            } @if (business.status === 'suspended') {
-            <button type="button" (click)="changeStatus(business, 'active')" [disabled]="saving">Reactivate</button>
-            }
-            <button type="button" class="text-button" (click)="openSubscription(business)">Manage subscription</button>
-          </div>
-
-          @if (subscriptionBusinessId === business.id) {
-          <div class="inline-form">
-            <label>
-              Plan
-              <input [(ngModel)]="subscriptionPlan" [name]="'plan-' + business.id" maxlength="40" required />
-            </label>
-            <label>
-              Status
-              <select [(ngModel)]="subscriptionStatus" [name]="'subscription-status-' + business.id">
-                <option value="active">Active</option>
-                <option value="trialing">Trialing</option>
-                <option value="past_due">Past due</option>
-                <option value="cancelled">Cancelled</option>
-              </select>
-            </label>
-            <label>
-              Ends at (optional)
-              <input
-                type="datetime-local"
-                [(ngModel)]="subscriptionEndsAt"
-                [name]="'subscription-end-' + business.id"
-              />
-            </label>
-            <button type="button" (click)="saveSubscription()" [disabled]="saving">Save subscription</button>
-            <button type="button" class="text-button" (click)="subscriptionBusinessId = null">Cancel</button>
-          </div>
-          }
-        </article>
-        } @empty {
-        <p class="empty-state">No businesses match this search.</p>
-        }
-      </div>
-    </section>
-
-    <section class="panel">
-      <p class="eyebrow">BUSINESS ACCESS</p>
-      <h2>Create a business administrator</h2>
-      <form class="form-grid" (ngSubmit)="createBusinessAdmin()">
-        <label class="wide">
-          Active business
-          <select [(ngModel)]="adminBusinessId" name="adminBusiness" required>
-            <option value="">Select a business</option>
-            @for (business of businesses; track business.id) { @if (business.status === 'active') {
-            <option [value]="business.id">{{ business.name }}</option>
-            } }
-          </select>
-        </label>
-        <label>Name <input [(ngModel)]="adminName" name="adminName" maxlength="120" required /></label>
-        <label>Email <input [(ngModel)]="adminEmail" name="adminEmail" type="email" maxlength="320" required /></label>
-        <label>Phone (optional) <input [(ngModel)]="adminPhone" name="adminPhone" maxlength="40" /></label>
-        <label
-          >Password (12+ characters)
-          <input
-            [(ngModel)]="adminPassword"
-            name="adminPassword"
-            type="password"
-            minlength="12"
-            maxlength="128"
-            required
-        /></label>
-        <button class="wide" type="submit" [disabled]="saving">Create administrator</button>
-      </form>
-    </section>
-    } @case ('users') {
-    <section class="panel">
-      <div class="section-heading">
-        <div>
-          <p class="eyebrow">USER & ROLE DIRECTORY</p>
-          <h2>All platform accounts</h2>
-        </div>
-        <span class="tag">{{ users.length }} users</span>
-      </div>
-      <div class="filter-bar">
-        <input
-          type="search"
-          [(ngModel)]="userSearch"
-          name="userSearch"
-          placeholder="Search name or email"
-          aria-label="Search users"
-          (keyup.enter)="loadUsers()"
-        />
-        <select [(ngModel)]="userRoleFilter" name="userRoleFilter" aria-label="Filter by role">
-          <option value="">All roles</option>
-          <option value="customer">Customer</option>
-          <option value="business_admin">Business owner</option>
-          <option value="business_staff">Business staff</option>
-          <option value="business_pending">Pending business</option>
-          <option value="platform_admin">Platform admin</option>
-        </select>
-        <select [(ngModel)]="userActiveFilter" name="userActiveFilter" aria-label="Filter by status">
-          <option value="">All states</option>
-          <option value="true">Active</option>
-          <option value="false">Disabled</option>
-        </select>
-        <button type="button" class="secondary-button" (click)="loadUsers()" [disabled]="loading">Apply</button>
-      </div>
-      <div class="table-wrap">
-        <table>
-          <thead>
-            <tr>
-              <th>User</th>
-              <th>Email</th>
-              <th>Role</th>
-              <th>Business</th>
-              <th>Orders</th>
-              <th>Joined</th>
-              <th>State</th>
-              <th>Actions</th>
-            </tr>
-          </thead>
-          <tbody>
-            @for (user of users; track user.id) {
-            <tr>
-              <td>{{ user.display_name }}</td>
-              <td>{{ user.email }}</td>
-              <td><span class="tag">{{ user.role.replaceAll('_', ' ') }}</span></td>
-              <td>{{ user.business_name || '—' }}</td>
-              <td>{{ user.order_count }}</td>
-              <td>{{ user.created_at | date: 'mediumDate' }}</td>
-              <td>{{ user.is_active ? 'Active' : 'Disabled' }}</td>
-              <td>
-                @if (user.id !== currentUser()?.id) {
-                <button type="button" class="text-button" (click)="toggleUserActive(user)" [disabled]="saving">
-                  {{ user.is_active ? 'Disable' : 'Enable' }}
-                </button>
-                } @else {
-                <span>Current account</span>
-                }
-              </td>
-            </tr>
-            } @empty {
-            <tr>
-              <td colspan="8" class="empty-cell">No users match the selected filters.</td>
-            </tr>
-            }
-          </tbody>
-        </table>
-      </div>
-    </section>
-    } @case ('products') {
-    <section class="panel">
-      <div class="section-heading">
-        <div>
-          <p class="eyebrow">CATALOG MODERATION</p>
-          <h2>Marketplace product monitoring</h2>
-        </div>
-        <span class="tag">{{ products.length }} products</span>
-      </div>
-      <div class="filter-bar">
-        <input
-          type="search"
-          [(ngModel)]="productSearch"
-          name="productSearch"
-          placeholder="Search product or category"
-          aria-label="Search products"
-          (keyup.enter)="loadProducts()"
-        />
-        <select [(ngModel)]="productBusinessFilter" name="productBusinessFilter" aria-label="Filter by business">
-          <option value="">All businesses</option>
-          @for (business of businesses; track business.id) {
-          <option [value]="business.id">{{ business.name }}</option>
-          }
-        </select>
-        <select [(ngModel)]="productActiveFilter" name="productActiveFilter" aria-label="Filter by status">
-          <option value="">All states</option>
-          <option value="true">Active</option>
-          <option value="false">Inactive</option>
-        </select>
-        <button type="button" class="secondary-button" (click)="loadProducts()" [disabled]="loading">Apply</button>
-      </div>
-      <div class="table-wrap">
-        <table>
-          <thead>
-            <tr>
-              <th>Product</th>
-              <th>Business</th>
-              <th>Category</th>
-              <th>Quality</th>
-              <th>Price</th>
-              <th>Stock</th>
-              <th>State</th>
-              <th>Actions</th>
-            </tr>
-          </thead>
-          <tbody>
-            @for (product of products; track product.id) {
-            <tr>
-              <td>{{ product.name }}</td>
-              <td>{{ product.business_name }}</td>
-              <td>{{ product.category }}</td>
-              <td>{{ product.quality_name }}</td>
-              <td>{{ product.price_cents / 100 | currency: 'PHP' : 'symbol' : '1.2-2' : 'en-PH' }}</td>
-              <td>{{ product.stock_count }}</td>
-              <td><span class="tag">{{ product.is_active ? 'Active' : 'Inactive' }}</span></td>
-              <td>
-                <button type="button" class="text-button" (click)="toggleProductActive(product)" [disabled]="saving">
-                  {{ product.is_active ? 'Deactivate' : 'Activate' }}
-                </button>
-              </td>
-            </tr>
-            } @empty {
-            <tr>
-              <td colspan="8" class="empty-cell">No products match the selected filters.</td>
-            </tr>
-            }
-          </tbody>
-        </table>
-      </div>
-    </section>
-    } @case ('orders') {
-    <section class="panel">
-      <div class="section-heading">
-        <div>
-          <p class="eyebrow">ORDER MONITORING</p>
-          <h2>Platform rental orders</h2>
-        </div>
-        <span class="tag">{{ orders.length }} orders</span>
-      </div>
-      <div class="filter-bar">
-        <select [(ngModel)]="orderBusinessFilter" name="orderBusinessFilter" aria-label="Filter orders by business">
-          <option value="">All businesses</option>
-          @for (business of businesses; track business.id) {
-          <option [value]="business.id">{{ business.name }}</option>
-          }
-        </select>
-        <select [(ngModel)]="orderStatusFilter" name="orderStatusFilter" aria-label="Filter orders by status">
-          <option value="">All statuses</option>
-          <option value="pending_admin">Pending admin</option>
-          <option value="confirmed">Confirmed</option>
-          <option value="completed">Completed</option>
-          <option value="cancelled">Cancelled</option>
-          <option value="rejected">Rejected</option>
-        </select>
-        <button type="button" class="secondary-button" (click)="loadOrdersAndPayments()" [disabled]="loading">
-          Apply
-        </button>
-      </div>
-      <div class="table-wrap">
-        <table>
-          <thead>
-            <tr>
-              <th>Order</th>
-              <th>Business</th>
-              <th>Customer</th>
-              <th>Rental window</th>
-              <th>Status</th>
-              <th>Payment</th>
-              <th>Total</th>
-              <th>Paid</th>
-            </tr>
-          </thead>
-          <tbody>
-            @for (order of orders; track order.id) {
-            <tr>
-              <td>#{{ order.id }}</td>
-              <td>{{ order.business_name }}</td>
-              <td>{{ order.customer_name }}</td>
-              <td>{{ order.starts_at | date: 'short' }} – {{ order.ends_at | date: 'short' }}</td>
-              <td><span class="tag">{{ order.status.replaceAll('_', ' ') }}</span></td>
-              <td>{{ order.payment_status.replaceAll('_', ' ') }}</td>
-              <td>{{ order.total_cents / 100 | currency: 'PHP' : 'symbol' : '1.2-2' : 'en-PH' }}</td>
-              <td>{{ order.paid_cents / 100 | currency: 'PHP' : 'symbol' : '1.2-2' : 'en-PH' }}</td>
-            </tr>
-            } @empty {
-            <tr>
-              <td colspan="8" class="empty-cell">No rental orders match the selected filters.</td>
-            </tr>
-            }
-          </tbody>
-        </table>
-      </div>
-    </section>
-
-    <section class="panel">
-      <div class="section-heading">
-        <div>
-          <p class="eyebrow">PAYMENT MONITORING</p>
-          <h2>Platform payment ledger</h2>
-        </div>
-        <span class="tag">{{ payments.length }} entries</span>
-      </div>
-      <div class="filter-bar">
-        <select
-          [(ngModel)]="paymentBusinessFilter"
-          name="paymentBusinessFilter"
-          aria-label="Filter payments by business"
+    <aside class="saas-sidebar" [class.mobile-open]="mobileMenuOpen" aria-label="Platform navigation sidebar">
+      <div class="saas-sidebar-header">
+        <a class="brand" routerLink="/home" aria-label="KARAOKE home">
+          <app-brand-mark [compact]="sidebarCollapsed" subtitle="Control Center"></app-brand-mark>
+        </a>
+        <button
+          type="button"
+          class="icon-btn collapse-desktop-btn"
+          [attr.aria-label]="sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'"
+          [attr.aria-expanded]="!sidebarCollapsed"
+          (click)="sidebarCollapsed = !sidebarCollapsed"
         >
-          <option value="">All businesses</option>
-          @for (business of businesses; track business.id) {
-          <option [value]="business.id">{{ business.name }}</option>
-          }
-        </select>
-        <select [(ngModel)]="paymentStatusFilter" name="paymentStatusFilter" aria-label="Filter payments by status">
-          <option value="">All statuses</option>
-          <option value="submitted">Submitted</option>
-          <option value="verified">Verified</option>
-          <option value="rejected">Rejected</option>
-        </select>
-        <select [(ngModel)]="paymentMethodFilter" name="paymentMethodFilter" aria-label="Filter payments by method">
-          <option value="">All methods</option>
-          <option value="cash">Cash</option>
-          <option value="gcash">GCash</option>
-          <option value="bank_transfer">Bank Transfer</option>
-        </select>
-        <button type="button" class="secondary-button" (click)="loadOrdersAndPayments()" [disabled]="loading">
-          Apply
+          <app-icon [name]="sidebarCollapsed ? 'chevron-right' : 'chevron-left'" [size]="16"></app-icon>
         </button>
       </div>
-      <div class="table-wrap">
-        <table>
-          <thead>
-            <tr>
-              <th>Order</th>
-              <th>Business</th>
-              <th>Customer</th>
-              <th>Kind</th>
-              <th>Amount</th>
-              <th>Method</th>
-              <th>Reference</th>
-              <th>Status</th>
-              <th>Paid at</th>
-            </tr>
-          </thead>
-          <tbody>
-            @for (entry of payments; track entry.id) {
-            <tr>
-              <td>#{{ entry.order_id }}</td>
-              <td>{{ entry.business_name }}</td>
-              <td>{{ entry.customer_name }}</td>
-              <td>{{ entry.kind }}</td>
-              <td>{{ entry.amount_cents / 100 | currency: 'PHP' : 'symbol' : '1.2-2' : 'en-PH' }}</td>
-              <td>{{ entry.method.replaceAll('_', ' ') }}</td>
-              <td>{{ entry.reference_number || '—' }}</td>
-              <td><span class="tag">{{ entry.status }}</span></td>
-              <td>{{ entry.paid_at | date: 'short' }}</td>
-            </tr>
-            } @empty {
-            <tr>
-              <td colspan="9" class="empty-cell">No payment entries match the selected filters.</td>
-            </tr>
-            }
-          </tbody>
-        </table>
-      </div>
-    </section>
-    } @case ('reports') {
-    <section class="panel">
-      <p class="eyebrow">PLATFORM ANALYTICS</p>
-      <h2>Marketplace revenue & activity summary</h2>
-      <div class="filter-bar">
-        <label>
-          From
-          <input type="datetime-local" [(ngModel)]="reportStart" name="platformReportStart" />
-        </label>
-        <label>
-          To
-          <input type="datetime-local" [(ngModel)]="reportEnd" name="platformReportEnd" />
-        </label>
-        <button type="button" class="secondary-button" (click)="loadReport()" [disabled]="loading">Apply dates</button>
-        @if (reportStart || reportEnd) {
-        <button type="button" class="text-button" (click)="clearReportFilter()" [disabled]="loading">Clear</button>
-        }
-      </div>
-      @if (report) {
-      <div class="kpi-strip">
-        <article class="kpi-card"><span>Total orders</span><strong>{{ report.orders }}</strong></article>
-        <article class="kpi-card">
-          <span>Active order value</span>
-          <strong>{{ report.total_order_value_cents / 100 | currency: 'PHP' : 'symbol' : '1.2-2' : 'en-PH' }}</strong>
-        </article>
-        <article class="kpi-card">
-          <span>Verified offline collections</span>
-          <strong>
-            {{ report.verified_collections_cents / 100 | currency: 'PHP' : 'symbol' : '1.2-2' : 'en-PH' }}
-          </strong>
-        </article>
-      </div>
-      <div class="state-tags" style="justify-content: flex-start; margin-bottom: 18px">
-        <span class="tag">Pending: {{ report.orders_by_status['pending_admin'] ?? 0 }}</span>
-        <span class="tag">Confirmed: {{ report.orders_by_status['confirmed'] ?? 0 }}</span>
-        <span class="tag">Completed: {{ report.orders_by_status['completed'] ?? 0 }}</span>
-        <span class="tag">Cancelled: {{ report.orders_by_status['cancelled'] ?? 0 }}</span>
-        <span class="tag">Rejected: {{ report.orders_by_status['rejected'] ?? 0 }}</span>
-      </div>
-      <div class="table-wrap">
-        <table>
-          <thead>
-            <tr>
-              <th>Business</th>
-              <th>Status</th>
-              <th>Orders</th>
-              <th>Active order value</th>
-              <th>Verified collections</th>
-            </tr>
-          </thead>
-          <tbody>
-            @for (row of report.businesses; track row.business_id) {
-            <tr>
-              <td>{{ row.business_name }}</td>
-              <td><span class="tag">{{ row.status }}</span></td>
-              <td>{{ row.orders }}</td>
-              <td>{{ row.active_order_value_cents / 100 | currency: 'PHP' : 'symbol' : '1.2-2' : 'en-PH' }}</td>
-              <td>{{ row.verified_collections_cents / 100 | currency: 'PHP' : 'symbol' : '1.2-2' : 'en-PH' }}</td>
-            </tr>
-            } @empty {
-            <tr>
-              <td colspan="5" class="empty-cell">No businesses registered yet.</td>
-            </tr>
-            }
-          </tbody>
-        </table>
-      </div>
-      }
-    </section>
-    } @case ('audit') {
-    <section class="panel">
-      <div class="section-heading">
-        <div>
-          <p class="eyebrow">AUDIT LOG</p>
-          <h2>Recent platform and business activity</h2>
-        </div>
-        <input
-          type="search"
-          [(ngModel)]="auditSearch"
-          name="auditSearch"
-          placeholder="Filter by action, entity, or business"
-          aria-label="Filter audit logs"
-        />
-      </div>
-      <div class="activity-list">
-        @for (event of filteredActivity; track event.id) {
-        <article>
-          <div>
-            <strong>{{ event.action.replaceAll('_', ' ') }}</strong>
-            <span>{{ event.business_name || 'Platform' }} · {{ event.entity_type }} #{{ event.entity_id || '—' }}</span>
-          </div>
-          <small>{{ event.created_at | date: 'short' }} · account #{{ event.actor_id }}</small>
-        </article>
-        } @empty {
-        <p class="empty-state">No administrative activity matches this filter.</p>
-        }
-      </div>
-    </section>
-    } @case ('notifications') {
-    <section class="panel">
-      <div class="section-heading">
-        <div>
-          <p class="eyebrow">SYSTEM ALERTS</p>
-          <h2>Platform notifications</h2>
-        </div>
-        @if (unreadNotifications > 0) {
-        <button type="button" class="secondary-button" (click)="markAllNotificationsRead()">Mark all read</button>
-        }
-      </div>
-      <div class="notification-list">
-        @for (item of notifications; track item.id) {
-        <article class="notification-item" [class.unread]="!item.is_read">
-          <div>
-            <strong>{{ item.title }}</strong>
-            <p>{{ item.message }}</p>
-            <small>{{ item.created_at | date: 'short' }}</small>
-          </div>
-          <div class="notification-actions">
-            @if (!item.is_read) {
-            <button type="button" class="text-button" (click)="markNotificationRead(item)">Mark read</button>
-            }
-          </div>
-        </article>
-        } @empty {
-        <p class="empty-state">No system notifications yet. New business applications appear here.</p>
-        }
-      </div>
-    </section>
-    } @case ('settings') {
-    <section class="admin-columns">
-      <div class="panel">
-        <p class="eyebrow">PLATFORM SETTINGS</p>
-        <h2>Marketplace defaults</h2>
-        <div class="settings-list">
-          <label>
-            Marketplace name
-            <div>
-              <input [(ngModel)]="settings['marketplace_name']" name="marketplaceName" maxlength="100" /><button
-                type="button"
-                (click)="saveSetting('marketplace_name')"
-                [disabled]="saving"
-              >
-                Save
-              </button>
-            </div>
-          </label>
-          <label>
-            Support email
-            <div>
-              <input [(ngModel)]="settings['support_email']" name="supportEmail" type="email" maxlength="320" /><button
-                type="button"
-                (click)="saveSetting('support_email')"
-                [disabled]="saving"
-              >
-                Save
-              </button>
-            </div>
-          </label>
-          <label>
-            Default subscription plan
-            <div>
-              <input [(ngModel)]="settings['default_subscription_plan']" name="defaultPlan" maxlength="100" /><button
-                type="button"
-                (click)="saveSetting('default_subscription_plan')"
-                [disabled]="saving"
-              >
-                Save
-              </button>
-            </div>
-          </label>
-          <label class="setting-toggle">
-            <input
-              [ngModel]="settings['maintenance_mode'] === 'true'"
-              name="maintenanceMode"
-              type="checkbox"
-              (ngModelChange)="settings['maintenance_mode'] = $event ? 'true' : 'false'"
-            />
-            Maintenance mode
-            <button type="button" (click)="saveSetting('maintenance_mode')" [disabled]="saving">Save</button>
-          </label>
-        </div>
-      </div>
 
-      <div class="panel">
-        <p class="eyebrow">ADMINISTRATOR ACCOUNT</p>
-        <h2>Profile & password</h2>
-        <form class="form-grid" (ngSubmit)="saveProfile()">
-          <label>
-            Display name
-            <input [(ngModel)]="profileName" name="platformProfileName" required maxlength="120" />
-          </label>
-          <label>
-            Phone
-            <input [(ngModel)]="profilePhone" name="platformProfilePhone" maxlength="40" />
-          </label>
-          <button class="wide" type="submit" [disabled]="saving">Save profile</button>
-        </form>
-        <form class="form-grid" style="margin-top: 24px" (ngSubmit)="changePassword()">
-          <label class="wide">
-            Current password
-            <input
-              [(ngModel)]="currentPassword"
-              name="platformCurrentPassword"
-              type="password"
-              autocomplete="current-password"
-              required
-            />
-          </label>
-          <label>
-            New password (12+ chars)
-            <input
-              [(ngModel)]="newPassword"
-              name="platformNewPassword"
-              type="password"
-              autocomplete="new-password"
-              minlength="12"
-              required
-            />
-          </label>
-          <label>
-            Confirm new password
-            <input
-              [(ngModel)]="confirmPassword"
-              name="platformConfirmPassword"
-              type="password"
-              autocomplete="new-password"
-              minlength="12"
-              required
-            />
-          </label>
-          <button class="wide" type="submit" [disabled]="saving">Update password</button>
-        </form>
+      <div class="saas-portal-tag platform">PLATFORM ADMIN</div>
+
+      <nav class="saas-nav" aria-label="Platform administration sections">
+        @for (item of sections; track item.id) {
+        <button
+          type="button"
+          [class.active]="section === item.id"
+          [attr.title]="item.label"
+          (click)="selectSection(item.id)"
+        >
+          <app-icon [name]="item.icon" [size]="17"></app-icon>
+          <span class="nav-label">{{ item.label }}</span>
+          @if (item.id === 'notifications' && unreadNotifications > 0) {
+          <span class="unread-pill">{{ unreadNotifications }}</span>
+          }
+        </button>
+        }
+      </nav>
+
+      <div class="saas-sidebar-footer">
+        <a routerLink="/home" title="Marketplace">
+          <app-icon name="store" [size]="17"></app-icon>
+          <span>Marketplace</span>
+        </a>
+        <button type="button" class="signout-btn" title="Sign out" (click)="signOut()">
+          <app-icon name="log-out" [size]="17"></app-icon>
+          <span>Sign out</span>
+        </button>
       </div>
-    </section>
-    } }
-  </main>
+    </aside>
+
+    <div class="saas-workspace">
+      <header class="saas-mobile-bar">
+        <div class="mobile-bar-left">
+          <button
+            type="button"
+            class="icon-btn"
+            aria-label="Toggle navigation menu"
+            [attr.aria-expanded]="mobileMenuOpen"
+            (click)="mobileMenuOpen = !mobileMenuOpen"
+          >
+            <app-icon [name]="mobileMenuOpen ? 'x' : 'menu'" [size]="18"></app-icon>
+          </button>
+          <span class="mobile-bar-title">{{ activeSectionLabel }}</span>
+        </div>
+        <button type="button" class="secondary-button" (click)="signOut()">Sign out</button>
+      </header>
+
+      <main class="saas-content">
+        <section class="page-heading">
+          <div>
+            <p class="eyebrow">PLATFORM ADMINISTRATION · MARKETPLACE-WIDE</p>
+            <h1>Marketplace control center</h1>
+            <p>Review businesses, monitor users, products, orders, payments, analytics, and platform defaults.</p>
+          </div>
+          <button type="button" class="secondary-button" (click)="refresh()" [disabled]="loading">
+            <app-icon name="refresh" [size]="15"></app-icon>
+            {{ loading ? 'Refreshing…' : 'Refresh data' }}
+          </button>
+        </section>
+
+        @if (error) {
+        <div class="message error" role="alert">
+          <span>{{ error }}</span>
+          <button type="button" class="retry-btn" (click)="refresh()">Retry</button>
+        </div>
+        } @if (notice) {
+        <div class="message notice" role="status">{{ notice }}</div>
+        } @if (summary) {
+        <section class="kpi-strip" aria-label="Platform statistics">
+          <article class="kpi-card">
+            <div class="kpi-head"><span>Total businesses</span><app-icon name="building" [size]="16"></app-icon></div>
+            <strong>{{ summary.businesses }}</strong>
+          </article>
+          <article class="kpi-card">
+            <div class="kpi-head"><span>Active businesses</span><app-icon name="check" [size]="16"></app-icon></div>
+            <strong>{{ summary.active_businesses }}</strong>
+          </article>
+          <article class="kpi-card">
+            <div class="kpi-head"><span>Awaiting approval</span><app-icon name="clock" [size]="16"></app-icon></div>
+            <strong>{{ summary.pending_businesses }}</strong>
+          </article>
+          <article class="kpi-card">
+            <div class="kpi-head"><span>Customers</span><app-icon name="users" [size]="16"></app-icon></div>
+            <strong>{{ summary.customers }}</strong>
+          </article>
+          <article class="kpi-card">
+            <div class="kpi-head">
+              <span>Rental requests</span><app-icon name="shopping-bag" [size]="16"></app-icon>
+            </div>
+            <strong>{{ summary.orders }}</strong>
+          </article>
+        </section>
+        @if (summary.pending_businesses > 0) {
+        <div class="attention-bar" role="region" aria-label="Pending business applications">
+          <div class="attention-copy">
+            <strong>Needs your attention:</strong>
+            <span>
+              {{ summary.pending_businesses }} business application{{ summary.pending_businesses === 1 ? '' : 's' }}
+              waiting for review
+            </span>
+          </div>
+          <div class="attention-actions">
+            <button type="button" class="secondary-button" (click)="reviewPendingBusinesses()">
+              Review pending applications
+            </button>
+          </div>
+        </div>
+        } } @switch (section) { @case ('businesses') {
+        <section class="panel">
+          <div class="section-heading">
+            <div>
+              <p class="eyebrow">TENANT DIRECTORY · INDIVIDUAL BUSINESSES</p>
+              <h2>Registered businesses & applications</h2>
+            </div>
+            <div class="directory-filters">
+              <input
+                [(ngModel)]="search"
+                name="businessSearch"
+                type="search"
+                placeholder="Search business or owner"
+                aria-label="Search businesses"
+              />
+              <select [(ngModel)]="statusFilter" name="statusFilter" aria-label="Filter business status">
+                <option value="all">All statuses</option>
+                <option value="pending">Pending</option>
+                <option value="active">Active</option>
+                <option value="suspended">Suspended</option>
+                <option value="rejected">Rejected</option>
+              </select>
+            </div>
+          </div>
+          <div class="status-filter-pills" role="group" aria-label="Quick business status filter">
+            <button
+              type="button"
+              class="filter-pill"
+              [class.active]="statusFilter === 'all'"
+              (click)="statusFilter = 'all'"
+            >
+              All <span>{{ businessStatusCount('all') }}</span>
+            </button>
+            <button
+              type="button"
+              class="filter-pill"
+              [class.active]="statusFilter === 'pending'"
+              (click)="statusFilter = 'pending'"
+            >
+              Pending <span>{{ businessStatusCount('pending') }}</span>
+            </button>
+            <button
+              type="button"
+              class="filter-pill"
+              [class.active]="statusFilter === 'active'"
+              (click)="statusFilter = 'active'"
+            >
+              Active <span>{{ businessStatusCount('active') }}</span>
+            </button>
+            <button
+              type="button"
+              class="filter-pill"
+              [class.active]="statusFilter === 'suspended'"
+              (click)="statusFilter = 'suspended'"
+            >
+              Suspended <span>{{ businessStatusCount('suspended') }}</span>
+            </button>
+            <button
+              type="button"
+              class="filter-pill"
+              [class.active]="statusFilter === 'rejected'"
+              (click)="statusFilter = 'rejected'"
+            >
+              Rejected <span>{{ businessStatusCount('rejected') }}</span>
+            </button>
+          </div>
+          <div class="business-list">
+            @for (business of filteredBusinesses; track business.id) {
+            <article class="business-card">
+              <div class="business-heading">
+                <div class="business-identity">
+                  @if (business.logo_url) {
+                  <img [src]="business.logo_url" [alt]="business.name + ' logo'" (error)="hideBrokenImage($event)" />
+                  } @else {
+                  <span class="biz-monogram" aria-hidden="true">{{ business.name.slice(0, 1) }}</span>
+                  }
+                  <div>
+                    <h3>{{ business.name }}</h3>
+                    <p>{{ business.owner_name || 'No owner record' }} · {{ business.owner_email || 'No email' }}</p>
+                    <small
+                      >Created {{ business.created_at | date: 'mediumDate' }} · /business/{{ business.slug }}</small
+                    >
+                  </div>
+                </div>
+                <div class="state-tags">
+                  <app-status-badge [value]="business.status"></app-status-badge>
+                  <app-status-badge
+                    [value]="business.subscription_status"
+                    [label]="business.subscription_plan + ' · ' + business.subscription_status.replaceAll('_', ' ')"
+                  ></app-status-badge>
+                  <app-status-badge
+                    [value]="business.is_listed ? 'listed' : 'inactive'"
+                    [label]="business.is_listed ? 'Listed' : 'Hidden'"
+                  ></app-status-badge>
+                </div>
+              </div>
+              <p class="business-description">{{ business.description || 'No storefront description provided.' }}</p>
+              <div class="business-actions">
+                @if (business.status === 'pending') {
+                <button type="button" (click)="changeStatus(business, 'active')" [disabled]="saving">Approve</button>
+                <button
+                  type="button"
+                  class="danger-button"
+                  (click)="changeStatus(business, 'rejected')"
+                  [disabled]="saving"
+                >
+                  Reject
+                </button>
+                } @if (business.status === 'active') {
+                <a class="secondary-button" [routerLink]="['/business', business.slug]">View storefront</a>
+                <button type="button" class="secondary-button" (click)="toggleListing(business)" [disabled]="saving">
+                  {{ business.is_listed ? 'Hide listing' : 'Publish listing' }}
+                </button>
+                <button
+                  type="button"
+                  class="danger-button"
+                  (click)="changeStatus(business, 'suspended')"
+                  [disabled]="saving"
+                >
+                  Suspend
+                </button>
+                } @if (business.status === 'suspended') {
+                <button type="button" (click)="changeStatus(business, 'active')" [disabled]="saving">Reactivate</button>
+                }
+                <button type="button" class="text-button" (click)="openSubscription(business)">
+                  Manage subscription
+                </button>
+              </div>
+
+              @if (subscriptionBusinessId === business.id) {
+              <div class="inline-form">
+                <label>
+                  Plan
+                  <input [(ngModel)]="subscriptionPlan" [name]="'plan-' + business.id" maxlength="40" required />
+                </label>
+                <label>
+                  Status
+                  <select [(ngModel)]="subscriptionStatus" [name]="'subscription-status-' + business.id">
+                    <option value="active">Active</option>
+                    <option value="trialing">Trialing</option>
+                    <option value="past_due">Past due</option>
+                    <option value="cancelled">Cancelled</option>
+                  </select>
+                </label>
+                <label>
+                  Ends at (optional)
+                  <input
+                    type="datetime-local"
+                    [(ngModel)]="subscriptionEndsAt"
+                    [name]="'subscription-end-' + business.id"
+                  />
+                </label>
+                <button type="button" (click)="saveSubscription()" [disabled]="saving">Save subscription</button>
+                <button type="button" class="text-button" (click)="subscriptionBusinessId = null">Cancel</button>
+              </div>
+              }
+            </article>
+            } @empty {
+            <p class="empty-state">No businesses match this search.</p>
+            }
+          </div>
+        </section>
+
+        <section class="panel spaced-panel">
+          <p class="eyebrow">BUSINESS ACCESS</p>
+          <h2>Create a business administrator</h2>
+          <form class="form-grid" (ngSubmit)="createBusinessAdmin()" novalidate>
+            <label class="wide">
+              <span>Active business <span class="required-mark" aria-hidden="true">*</span></span>
+              <select
+                [(ngModel)]="adminBusinessId"
+                name="adminBusiness"
+                [attr.aria-invalid]="fieldErrors['adminBusiness'] ? 'true' : null"
+                required
+              >
+                <option value="">Select a business</option>
+                @for (business of businesses; track business.id) { @if (business.status === 'active') {
+                <option [value]="business.id">{{ business.name }}</option>
+                } }
+              </select>
+              @if (fieldErrors['adminBusiness']) {
+              <span class="field-error" role="alert">{{ fieldErrors['adminBusiness'] }}</span>
+              }
+            </label>
+            <label>
+              <span>Name <span class="required-mark" aria-hidden="true">*</span></span>
+              <input
+                [(ngModel)]="adminName"
+                name="adminName"
+                maxlength="120"
+                placeholder="e.g. Alex Cruz"
+                [attr.aria-invalid]="fieldErrors['adminName'] ? 'true' : null"
+                required
+              />
+              @if (fieldErrors['adminName']) {
+              <span class="field-error" role="alert">{{ fieldErrors['adminName'] }}</span>
+              }
+            </label>
+            <label>
+              <span>Email <span class="required-mark" aria-hidden="true">*</span></span>
+              <input
+                [(ngModel)]="adminEmail"
+                name="adminEmail"
+                type="email"
+                maxlength="320"
+                placeholder="owner@business.com"
+                [attr.aria-invalid]="fieldErrors['adminEmail'] ? 'true' : null"
+                required
+              />
+              @if (fieldErrors['adminEmail']) {
+              <span class="field-error" role="alert">{{ fieldErrors['adminEmail'] }}</span>
+              }
+            </label>
+            <label>
+              <span>Phone <span class="optional-mark">(optional)</span></span>
+              <input [(ngModel)]="adminPhone" name="adminPhone" maxlength="40" placeholder="09XX-XXX-XXXX" />
+            </label>
+            <label>
+              <span>Password (12+ characters) <span class="required-mark" aria-hidden="true">*</span></span>
+              <input
+                [(ngModel)]="adminPassword"
+                name="adminPassword"
+                type="password"
+                minlength="12"
+                maxlength="128"
+                placeholder="At least 12 characters"
+                [attr.aria-invalid]="fieldErrors['adminPassword'] ? 'true' : null"
+                required
+              />
+              @if (fieldErrors['adminPassword']) {
+              <span class="field-error" role="alert">{{ fieldErrors['adminPassword'] }}</span>
+              }
+            </label>
+            <button class="wide" type="submit" [disabled]="saving">Create administrator</button>
+          </form>
+        </section>
+        } @case ('users') {
+        <section class="panel">
+          <div class="section-heading">
+            <div>
+              <p class="eyebrow">USER & ROLE DIRECTORY</p>
+              <h2>All platform accounts</h2>
+            </div>
+            <span class="count-pill">{{ users.length }} users</span>
+          </div>
+          <div class="filter-bar">
+            <input
+              type="search"
+              [(ngModel)]="userSearch"
+              name="userSearch"
+              placeholder="Search name or email"
+              aria-label="Search users"
+              (keyup.enter)="usersPage = 1; loadUsers()"
+            />
+            <select [(ngModel)]="userRoleFilter" name="userRoleFilter" aria-label="Filter by role">
+              <option value="">All roles</option>
+              <option value="customer">Customer</option>
+              <option value="business_admin">Business owner</option>
+              <option value="business_staff">Business staff</option>
+              <option value="business_pending">Pending business</option>
+              <option value="platform_admin">Platform admin</option>
+            </select>
+            <select [(ngModel)]="userActiveFilter" name="userActiveFilter" aria-label="Filter by status">
+              <option value="">All states</option>
+              <option value="true">Active</option>
+              <option value="false">Disabled</option>
+            </select>
+            <button type="button" class="secondary-button" (click)="usersPage = 1; loadUsers()" [disabled]="loading">
+              Apply
+            </button>
+          </div>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>User</th>
+                  <th>Email</th>
+                  <th>Role</th>
+                  <th>Business</th>
+                  <th>Orders</th>
+                  <th>Joined</th>
+                  <th>State</th>
+                  <th>Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                @for (user of pagedUsers; track user.id) {
+                <tr>
+                  <td>{{ user.display_name }}</td>
+                  <td>{{ user.email }}</td>
+                  <td><app-status-badge [value]="user.role"></app-status-badge></td>
+                  <td>{{ user.business_name || '—' }}</td>
+                  <td class="num">{{ user.order_count }}</td>
+                  <td>{{ user.created_at | date: 'mediumDate' }}</td>
+                  <td><app-status-badge [value]="user.is_active ? 'active' : 'disabled'"></app-status-badge></td>
+                  <td>
+                    @if (user.id !== currentUser()?.id) {
+                    <button type="button" class="text-button" (click)="toggleUserActive(user)" [disabled]="saving">
+                      {{ user.is_active ? 'Disable' : 'Enable' }}
+                    </button>
+                    } @else {
+                    <span class="muted-cell">Current account</span>
+                    }
+                  </td>
+                </tr>
+                } @empty {
+                <tr>
+                  <td colspan="8" class="empty-cell">No users match the selected filters.</td>
+                </tr>
+                }
+              </tbody>
+            </table>
+          </div>
+          @if (usersTotalPages > 1) {
+          <div class="pagination-bar">
+            <span>Page {{ usersPage }} of {{ usersTotalPages }}</span>
+            <div class="pagination-controls">
+              <button
+                type="button"
+                class="secondary-button"
+                [disabled]="usersPage <= 1"
+                (click)="usersPage = usersPage - 1"
+              >
+                Previous
+              </button>
+              <button
+                type="button"
+                class="secondary-button"
+                [disabled]="usersPage >= usersTotalPages"
+                (click)="usersPage = usersPage + 1"
+              >
+                Next
+              </button>
+            </div>
+          </div>
+          }
+        </section>
+        } @case ('products') {
+        <section class="panel">
+          <div class="section-heading">
+            <div>
+              <p class="eyebrow">CATALOG MODERATION</p>
+              <h2>Marketplace product monitoring</h2>
+            </div>
+            <span class="count-pill">{{ products.length }} products</span>
+          </div>
+          <div class="filter-bar">
+            <input
+              type="search"
+              [(ngModel)]="productSearch"
+              name="productSearch"
+              placeholder="Search product or category"
+              aria-label="Search products"
+              (keyup.enter)="productsPage = 1; loadProducts()"
+            />
+            <select [(ngModel)]="productBusinessFilter" name="productBusinessFilter" aria-label="Filter by business">
+              <option value="">All businesses</option>
+              @for (business of businesses; track business.id) {
+              <option [value]="business.id">{{ business.name }}</option>
+              }
+            </select>
+            <select [(ngModel)]="productActiveFilter" name="productActiveFilter" aria-label="Filter by status">
+              <option value="">All states</option>
+              <option value="true">Active</option>
+              <option value="false">Inactive</option>
+            </select>
+            <button
+              type="button"
+              class="secondary-button"
+              (click)="productsPage = 1; loadProducts()"
+              [disabled]="loading"
+            >
+              Apply
+            </button>
+          </div>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Product</th>
+                  <th>Business</th>
+                  <th>Category</th>
+                  <th>Quality</th>
+                  <th>Price</th>
+                  <th>Stock</th>
+                  <th>State</th>
+                  <th>Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                @for (product of pagedProducts; track product.id) {
+                <tr>
+                  <td>{{ product.name }}</td>
+                  <td>{{ product.business_name }}</td>
+                  <td>{{ product.category }}</td>
+                  <td>{{ product.quality_name }}</td>
+                  <td class="num">{{ product.price_cents / 100 | currency: 'PHP' : 'symbol' : '1.2-2' : 'en-PH' }}</td>
+                  <td class="num">{{ product.stock_count }}</td>
+                  <td><app-status-badge [value]="product.is_active ? 'active' : 'inactive'"></app-status-badge></td>
+                  <td>
+                    <button
+                      type="button"
+                      class="text-button"
+                      (click)="toggleProductActive(product)"
+                      [disabled]="saving"
+                    >
+                      {{ product.is_active ? 'Deactivate' : 'Activate' }}
+                    </button>
+                  </td>
+                </tr>
+                } @empty {
+                <tr>
+                  <td colspan="8" class="empty-cell">No products match the selected filters.</td>
+                </tr>
+                }
+              </tbody>
+            </table>
+          </div>
+          @if (productsTotalPages > 1) {
+          <div class="pagination-bar">
+            <span>Page {{ productsPage }} of {{ productsTotalPages }}</span>
+            <div class="pagination-controls">
+              <button
+                type="button"
+                class="secondary-button"
+                [disabled]="productsPage <= 1"
+                (click)="productsPage = productsPage - 1"
+              >
+                Previous
+              </button>
+              <button
+                type="button"
+                class="secondary-button"
+                [disabled]="productsPage >= productsTotalPages"
+                (click)="productsPage = productsPage + 1"
+              >
+                Next
+              </button>
+            </div>
+          </div>
+          }
+        </section>
+        } @case ('orders') {
+        <section class="panel">
+          <div class="section-heading">
+            <div>
+              <p class="eyebrow">ORDER MONITORING · CROSS-TENANT</p>
+              <h2>Platform rental orders</h2>
+            </div>
+            <span class="count-pill">{{ orders.length }} orders</span>
+          </div>
+          <div class="filter-bar">
+            <select [(ngModel)]="orderBusinessFilter" name="orderBusinessFilter" aria-label="Filter orders by business">
+              <option value="">All businesses</option>
+              @for (business of businesses; track business.id) {
+              <option [value]="business.id">{{ business.name }}</option>
+              }
+            </select>
+            <select [(ngModel)]="orderStatusFilter" name="orderStatusFilter" aria-label="Filter orders by status">
+              <option value="">All statuses</option>
+              <option value="pending_admin">Pending admin</option>
+              <option value="confirmed">Confirmed</option>
+              <option value="completed">Completed</option>
+              <option value="cancelled">Cancelled</option>
+              <option value="rejected">Rejected</option>
+            </select>
+            <button
+              type="button"
+              class="secondary-button"
+              (click)="ordersPage = 1; loadOrdersAndPayments()"
+              [disabled]="loading"
+            >
+              Apply
+            </button>
+          </div>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Order</th>
+                  <th>Business</th>
+                  <th>Customer</th>
+                  <th>Rental window</th>
+                  <th>Status</th>
+                  <th>Payment</th>
+                  <th>Total</th>
+                  <th>Paid</th>
+                </tr>
+              </thead>
+              <tbody>
+                @for (order of pagedOrders; track order.id) {
+                <tr>
+                  <td class="num">#{{ order.id }}</td>
+                  <td>{{ order.business_name }}</td>
+                  <td>{{ order.customer_name }}</td>
+                  <td>{{ order.starts_at | date: 'short' }} – {{ order.ends_at | date: 'short' }}</td>
+                  <td><app-status-badge [value]="order.status"></app-status-badge></td>
+                  <td><app-status-badge [value]="order.payment_status"></app-status-badge></td>
+                  <td class="num">{{ order.total_cents / 100 | currency: 'PHP' : 'symbol' : '1.2-2' : 'en-PH' }}</td>
+                  <td class="num">{{ order.paid_cents / 100 | currency: 'PHP' : 'symbol' : '1.2-2' : 'en-PH' }}</td>
+                </tr>
+                } @empty {
+                <tr>
+                  <td colspan="8" class="empty-cell">No rental orders match the selected filters.</td>
+                </tr>
+                }
+              </tbody>
+            </table>
+          </div>
+          @if (ordersTotalPages > 1) {
+          <div class="pagination-bar">
+            <span>Page {{ ordersPage }} of {{ ordersTotalPages }}</span>
+            <div class="pagination-controls">
+              <button
+                type="button"
+                class="secondary-button"
+                [disabled]="ordersPage <= 1"
+                (click)="ordersPage = ordersPage - 1"
+              >
+                Previous
+              </button>
+              <button
+                type="button"
+                class="secondary-button"
+                [disabled]="ordersPage >= ordersTotalPages"
+                (click)="ordersPage = ordersPage + 1"
+              >
+                Next
+              </button>
+            </div>
+          </div>
+          }
+        </section>
+
+        <section class="panel spaced-panel">
+          <div class="section-heading">
+            <div>
+              <p class="eyebrow">PAYMENT MONITORING · CROSS-TENANT</p>
+              <h2>Platform payment ledger</h2>
+            </div>
+            <span class="count-pill">{{ payments.length }} entries</span>
+          </div>
+          <div class="filter-bar">
+            <select
+              [(ngModel)]="paymentBusinessFilter"
+              name="paymentBusinessFilter"
+              aria-label="Filter payments by business"
+            >
+              <option value="">All businesses</option>
+              @for (business of businesses; track business.id) {
+              <option [value]="business.id">{{ business.name }}</option>
+              }
+            </select>
+            <select [(ngModel)]="paymentStatusFilter" name="paymentStatusFilter" aria-label="Filter payments by status">
+              <option value="">All statuses</option>
+              <option value="submitted">Submitted</option>
+              <option value="verified">Verified</option>
+              <option value="rejected">Rejected</option>
+            </select>
+            <select [(ngModel)]="paymentMethodFilter" name="paymentMethodFilter" aria-label="Filter payments by method">
+              <option value="">All methods</option>
+              <option value="cash">Cash</option>
+              <option value="gcash">GCash</option>
+              <option value="bank_transfer">Bank Transfer</option>
+            </select>
+            <button
+              type="button"
+              class="secondary-button"
+              (click)="paymentsPage = 1; loadOrdersAndPayments()"
+              [disabled]="loading"
+            >
+              Apply
+            </button>
+          </div>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Order</th>
+                  <th>Business</th>
+                  <th>Customer</th>
+                  <th>Kind</th>
+                  <th>Amount</th>
+                  <th>Method</th>
+                  <th>Reference</th>
+                  <th>Status</th>
+                  <th>Paid at</th>
+                </tr>
+              </thead>
+              <tbody>
+                @for (entry of pagedPayments; track entry.id) {
+                <tr>
+                  <td class="num">#{{ entry.order_id }}</td>
+                  <td>{{ entry.business_name }}</td>
+                  <td>{{ entry.customer_name }}</td>
+                  <td>{{ entry.kind }}</td>
+                  <td class="num">{{ entry.amount_cents / 100 | currency: 'PHP' : 'symbol' : '1.2-2' : 'en-PH' }}</td>
+                  <td>{{ entry.method.replaceAll('_', ' ') }}</td>
+                  <td>{{ entry.reference_number || '—' }}</td>
+                  <td><app-status-badge [value]="entry.status"></app-status-badge></td>
+                  <td>{{ entry.paid_at | date: 'short' }}</td>
+                </tr>
+                } @empty {
+                <tr>
+                  <td colspan="9" class="empty-cell">No payment entries match the selected filters.</td>
+                </tr>
+                }
+              </tbody>
+            </table>
+          </div>
+          @if (paymentsTotalPages > 1) {
+          <div class="pagination-bar">
+            <span>Page {{ paymentsPage }} of {{ paymentsTotalPages }}</span>
+            <div class="pagination-controls">
+              <button
+                type="button"
+                class="secondary-button"
+                [disabled]="paymentsPage <= 1"
+                (click)="paymentsPage = paymentsPage - 1"
+              >
+                Previous
+              </button>
+              <button
+                type="button"
+                class="secondary-button"
+                [disabled]="paymentsPage >= paymentsTotalPages"
+                (click)="paymentsPage = paymentsPage + 1"
+              >
+                Next
+              </button>
+            </div>
+          </div>
+          }
+        </section>
+        } @case ('reports') {
+        <section class="panel">
+          <p class="eyebrow">PLATFORM ANALYTICS · MARKETPLACE-WIDE</p>
+          <h2>Marketplace revenue & activity summary</h2>
+          <div class="filter-bar">
+            <label>
+              From
+              <input type="datetime-local" [(ngModel)]="reportStart" name="platformReportStart" />
+            </label>
+            <label>
+              To
+              <input type="datetime-local" [(ngModel)]="reportEnd" name="platformReportEnd" />
+            </label>
+            <button type="button" class="secondary-button" (click)="loadReport()" [disabled]="loading">
+              Apply dates
+            </button>
+            @if (reportStart || reportEnd) {
+            <button type="button" class="text-button" (click)="clearReportFilter()" [disabled]="loading">Clear</button>
+            }
+          </div>
+          @if (report) {
+          <div class="kpi-strip">
+            <article class="kpi-card"><span>Total orders</span><strong>{{ report.orders }}</strong></article>
+            <article class="kpi-card">
+              <span>Active order value</span>
+              <strong class="tabular-nums">
+                {{ report.total_order_value_cents / 100 | currency: 'PHP' : 'symbol' : '1.2-2' : 'en-PH' }}
+              </strong>
+            </article>
+            <article class="kpi-card">
+              <span>Verified offline collections</span>
+              <strong class="tabular-nums">
+                {{ report.verified_collections_cents / 100 | currency: 'PHP' : 'symbol' : '1.2-2' : 'en-PH' }}
+              </strong>
+            </article>
+          </div>
+          <div class="status-breakdown">
+            <app-status-badge
+              value="pending_admin"
+              [label]="'Pending: ' + (report.orders_by_status['pending_admin'] ?? 0)"
+            ></app-status-badge>
+            <app-status-badge
+              value="confirmed"
+              [label]="'Confirmed: ' + (report.orders_by_status['confirmed'] ?? 0)"
+            ></app-status-badge>
+            <app-status-badge
+              value="completed"
+              [label]="'Completed: ' + (report.orders_by_status['completed'] ?? 0)"
+            ></app-status-badge>
+            <app-status-badge
+              value="cancelled"
+              [label]="'Cancelled: ' + (report.orders_by_status['cancelled'] ?? 0)"
+            ></app-status-badge>
+            <app-status-badge
+              value="rejected"
+              [label]="'Rejected: ' + (report.orders_by_status['rejected'] ?? 0)"
+            ></app-status-badge>
+          </div>
+          <h3 class="subtable-title">Per-business performance breakdown</h3>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Business</th>
+                  <th>Status</th>
+                  <th>Orders</th>
+                  <th>Active order value</th>
+                  <th>Verified collections</th>
+                </tr>
+              </thead>
+              <tbody>
+                @for (row of report.businesses; track row.business_id) {
+                <tr>
+                  <td>{{ row.business_name }}</td>
+                  <td><app-status-badge [value]="row.status"></app-status-badge></td>
+                  <td class="num">{{ row.orders }}</td>
+                  <td class="num">
+                    {{ row.active_order_value_cents / 100 | currency: 'PHP' : 'symbol' : '1.2-2' : 'en-PH' }}
+                  </td>
+                  <td class="num">
+                    {{ row.verified_collections_cents / 100 | currency: 'PHP' : 'symbol' : '1.2-2' : 'en-PH' }}
+                  </td>
+                </tr>
+                } @empty {
+                <tr>
+                  <td colspan="5" class="empty-cell">No businesses registered yet.</td>
+                </tr>
+                }
+              </tbody>
+            </table>
+          </div>
+          }
+        </section>
+        } @case ('audit') {
+        <section class="panel">
+          <div class="section-heading">
+            <div>
+              <p class="eyebrow">AUDIT LOG · PLATFORM & TENANTS</p>
+              <h2>Recent platform and business activity</h2>
+            </div>
+            <div class="directory-filters">
+              <span class="count-pill">{{ filteredActivity.length }} events</span>
+              <input
+                type="search"
+                [(ngModel)]="auditSearch"
+                name="auditSearch"
+                placeholder="Filter by action, entity, or business"
+                aria-label="Filter audit logs"
+                (ngModelChange)="auditPage = 1"
+              />
+            </div>
+          </div>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Time</th>
+                  <th>Scope</th>
+                  <th>Action</th>
+                  <th>Target</th>
+                  <th>Account</th>
+                </tr>
+              </thead>
+              <tbody>
+                @for (event of pagedActivity; track event.id) {
+                <tr>
+                  <td>{{ event.created_at | date: 'short' }}</td>
+                  <td>
+                    <app-status-badge
+                      [value]="event.business_name ? 'neutral' : 'platform_admin'"
+                      [label]="event.business_name || 'Platform'"
+                      [showDot]="false"
+                    ></app-status-badge>
+                  </td>
+                  <td><strong>{{ event.action.replaceAll('_', ' ') }}</strong></td>
+                  <td>{{ event.entity_type }} #{{ event.entity_id || '—' }}</td>
+                  <td class="num">Account #{{ event.actor_id }}</td>
+                </tr>
+                } @empty {
+                <tr>
+                  <td colspan="5" class="empty-cell">No administrative activity matches this filter.</td>
+                </tr>
+                }
+              </tbody>
+            </table>
+          </div>
+          @if (auditTotalPages > 1) {
+          <div class="pagination-bar">
+            <span>Page {{ auditPage }} of {{ auditTotalPages }}</span>
+            <div class="pagination-controls">
+              <button
+                type="button"
+                class="secondary-button"
+                [disabled]="auditPage <= 1"
+                (click)="auditPage = auditPage - 1"
+              >
+                Previous
+              </button>
+              <button
+                type="button"
+                class="secondary-button"
+                [disabled]="auditPage >= auditTotalPages"
+                (click)="auditPage = auditPage + 1"
+              >
+                Next
+              </button>
+            </div>
+          </div>
+          }
+        </section>
+        } @case ('notifications') {
+        <section class="panel">
+          <div class="section-heading">
+            <div>
+              <p class="eyebrow">SYSTEM ALERTS</p>
+              <h2>Platform notifications</h2>
+            </div>
+            @if (unreadNotifications > 0) {
+            <button type="button" class="secondary-button" (click)="markAllNotificationsRead()">Mark all read</button>
+            }
+          </div>
+          <div class="notification-list">
+            @for (item of notifications; track item.id) {
+            <article class="notification-item" [class.unread]="!item.is_read">
+              <div>
+                <strong>{{ item.title }}</strong>
+                <p>{{ item.message }}</p>
+                <small>{{ item.created_at | date: 'short' }}</small>
+              </div>
+              <div class="notification-actions">
+                @if (!item.is_read) {
+                <button type="button" class="text-button" (click)="markNotificationRead(item)">Mark read</button>
+                }
+              </div>
+            </article>
+            } @empty {
+            <p class="empty-state">No system notifications yet. New business applications appear here.</p>
+            }
+          </div>
+        </section>
+        } @case ('settings') {
+        <section class="admin-columns">
+          <div class="panel">
+            <p class="eyebrow">PLATFORM SETTINGS · GLOBAL DEFAULTS</p>
+            <h2>Marketplace defaults</h2>
+            <div class="settings-list">
+              <label>
+                Marketplace name
+                <div>
+                  <input [(ngModel)]="settings['marketplace_name']" name="marketplaceName" maxlength="100" /><button
+                    type="button"
+                    (click)="saveSetting('marketplace_name')"
+                    [disabled]="saving"
+                  >
+                    Save
+                  </button>
+                </div>
+              </label>
+              <label>
+                Support email
+                <div>
+                  <input
+                    [(ngModel)]="settings['support_email']"
+                    name="supportEmail"
+                    type="email"
+                    maxlength="320"
+                  /><button type="button" (click)="saveSetting('support_email')" [disabled]="saving">Save</button>
+                </div>
+              </label>
+              <label>
+                Default subscription plan
+                <div>
+                  <input
+                    [(ngModel)]="settings['default_subscription_plan']"
+                    name="defaultPlan"
+                    maxlength="100"
+                  /><button type="button" (click)="saveSetting('default_subscription_plan')" [disabled]="saving">
+                    Save
+                  </button>
+                </div>
+              </label>
+              <label class="setting-toggle">
+                <input
+                  [ngModel]="settings['maintenance_mode'] === 'true'"
+                  name="maintenanceMode"
+                  type="checkbox"
+                  (ngModelChange)="settings['maintenance_mode'] = $event ? 'true' : 'false'"
+                />
+                <span>Maintenance mode</span>
+                <button type="button" (click)="saveSetting('maintenance_mode')" [disabled]="saving">Save</button>
+              </label>
+            </div>
+          </div>
+
+          <div class="panel">
+            <p class="eyebrow">ADMINISTRATOR ACCOUNT</p>
+            <h2>Profile & password</h2>
+            <form class="form-grid" (ngSubmit)="saveProfile()" novalidate>
+              <label>
+                <span>Display name <span class="required-mark" aria-hidden="true">*</span></span>
+                <input
+                  [(ngModel)]="profileName"
+                  name="platformProfileName"
+                  required
+                  maxlength="120"
+                  placeholder="Your full name"
+                  [attr.aria-invalid]="fieldErrors['profileName'] ? 'true' : null"
+                />
+                @if (fieldErrors['profileName']) {
+                <span class="field-error" role="alert">{{ fieldErrors['profileName'] }}</span>
+                }
+              </label>
+              <label>
+                <span>Phone <span class="optional-mark">(optional)</span></span>
+                <input
+                  [(ngModel)]="profilePhone"
+                  name="platformProfilePhone"
+                  maxlength="40"
+                  placeholder="09XX-XXX-XXXX"
+                />
+              </label>
+              <button class="wide" type="submit" [disabled]="saving">Save profile</button>
+            </form>
+            <form class="form-grid spaced-form" (ngSubmit)="changePassword()" novalidate>
+              <p class="form-section-title">Change password</p>
+              <label class="wide">
+                <span>Current password <span class="required-mark" aria-hidden="true">*</span></span>
+                <input
+                  [(ngModel)]="currentPassword"
+                  name="platformCurrentPassword"
+                  type="password"
+                  autocomplete="current-password"
+                  [attr.aria-invalid]="fieldErrors['currentPassword'] ? 'true' : null"
+                  required
+                />
+                @if (fieldErrors['currentPassword']) {
+                <span class="field-error" role="alert">{{ fieldErrors['currentPassword'] }}</span>
+                }
+              </label>
+              <label>
+                <span>New password (12+ chars) <span class="required-mark" aria-hidden="true">*</span></span>
+                <input
+                  [(ngModel)]="newPassword"
+                  name="platformNewPassword"
+                  type="password"
+                  autocomplete="new-password"
+                  minlength="12"
+                  placeholder="At least 12 characters"
+                  [attr.aria-invalid]="fieldErrors['newPassword'] ? 'true' : null"
+                  required
+                />
+                @if (fieldErrors['newPassword']) {
+                <span class="field-error" role="alert">{{ fieldErrors['newPassword'] }}</span>
+                }
+              </label>
+              <label>
+                <span>Confirm new password <span class="required-mark" aria-hidden="true">*</span></span>
+                <input
+                  [(ngModel)]="confirmPassword"
+                  name="platformConfirmPassword"
+                  type="password"
+                  autocomplete="new-password"
+                  minlength="12"
+                  placeholder="Re-enter new password"
+                  [attr.aria-invalid]="fieldErrors['confirmPassword'] ? 'true' : null"
+                  required
+                />
+                @if (fieldErrors['confirmPassword']) {
+                <span class="field-error" role="alert">{{ fieldErrors['confirmPassword'] }}</span>
+                }
+              </label>
+              <button class="wide" type="submit" [disabled]="saving">Update password</button>
+            </form>
+          </div>
+        </section>
+        } }
+      </main>
+    </div>
+  </div>
 </ion-content>
