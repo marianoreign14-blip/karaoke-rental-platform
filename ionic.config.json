@@ -1,0 +1,7 @@
+{
+  "name": "KARAOKEWEBAPP",
+  "integrations": {
+    "capacitor": {}
+  },
+  "type": "angular-standalone"
+}

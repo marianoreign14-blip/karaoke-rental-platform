@@ -1,0 +1,367 @@
+<ion-header>
+  <ion-toolbar>
+    <a class="brand" routerLink="/home" aria-label="KARAOKE home">KARAOKE</a>
+    <nav class="top-nav" aria-label="Main navigation">
+      <a routerLink="/home" routerLinkActive="active">Marketplace</a>
+      <a routerLink="/account" routerLinkActive="active">{{ user() ? 'My account & orders' : 'Sign in' }}</a>
+      @if (user()?.role === 'business_admin' || user()?.role === 'business_staff') {
+      <a routerLink="/admin" routerLinkActive="active">Business admin</a>
+      } @if (user()?.role === 'platform_admin') {
+      <a routerLink="/platform" routerLinkActive="active">Platform admin</a>
+      }
+      <a routerLink="/business-register" routerLinkActive="active">List your business</a>
+      <a class="cart-link" href="#rental-request">Request <ion-badge>{{ cartCount }}</ion-badge></a>
+    </nav>
+  </ion-toolbar>
+</ion-header>
+
+<ion-content>
+  <main>
+    @if (selectedBusiness) {
+    <section
+      class="storefront-hero"
+      [style.background-color]="selectedBusiness.brand_secondary"
+      [style.color]="brandTextColor(selectedBusiness.brand_secondary)"
+      [style.border-left]="'5px solid ' + selectedBusiness.brand_primary"
+    >
+      @if (selectedBusiness.banner_url) {
+      <img
+        [src]="selectedBusiness.banner_url"
+        [alt]="selectedBusiness.name + ' banner'"
+        style="width: 100%; max-height: 160px; object-fit: cover; border-radius: 10px"
+      />
+      }
+      <div style="display: flex; align-items: center; gap: 16px">
+        @if (selectedBusiness.logo_url) {
+        <img
+          [src]="selectedBusiness.logo_url"
+          [alt]="selectedBusiness.name + ' logo'"
+          style="width: 76px; height: 76px; flex: 0 0 76px; border-radius: 12px; object-fit: cover"
+        />
+        } @else {
+        <span
+          aria-hidden="true"
+          [style.background-color]="selectedBusiness.brand_primary"
+          style="
+            display: grid;
+            place-items: center;
+            width: 76px;
+            height: 76px;
+            flex: 0 0 76px;
+            border-radius: 12px;
+            color: white;
+            font-size: 30px;
+            font-weight: 800;
+          "
+          >{{ selectedBusiness.name.slice(0, 1) }}</span
+        >
+        }
+        <div>
+          <p class="eyebrow" [style.color]="selectedBusiness.brand_primary">BUSINESS STOREFRONT</p>
+          <h1 style="margin: 7px 0; font-size: clamp(28px, 4vw, 42px)">{{ selectedBusiness.name }}</h1>
+          <p>{{ selectedBusiness.description }}</p>
+          @if (selectedBusiness.contact_phone || selectedBusiness.contact_email) {
+          <small>{{ selectedBusiness.contact_phone }} {{ selectedBusiness.contact_email }}</small>
+          }
+        </div>
+      </div>
+      <a routerLink="/home">← Browse all businesses</a>
+    </section>
+    } @else {
+    <section class="business-directory" aria-labelledby="business-directory-title">
+      <div class="section-heading">
+        <div>
+          <p class="eyebrow">THE MARKETPLACE</p>
+          <h1 id="business-directory-title">Find a karaoke rental business</h1>
+        </div>
+        <a class="secondary-button" routerLink="/business-register">Register your business</a>
+      </div>
+      <label class="business-search">
+        <span class="visually-hidden">Search businesses</span>
+        <input
+          [(ngModel)]="businessSearch"
+          name="businessSearch"
+          type="search"
+          placeholder="Search business name or services"
+          aria-label="Search businesses"
+        />
+      </label>
+      @if (filteredBusinesses.length) {
+      <div class="product-grid">
+        @for (business of filteredBusinesses; track business.id) {
+        <a
+          class="business-card product-card"
+          [routerLink]="['/business', business.slug]"
+          [style.border-top-color]="business.brand_primary"
+        >
+          @if (business.logo_url) {
+          <img [src]="business.logo_url" [alt]="business.name + ' logo'" loading="lazy" />
+          } @else {
+          <div class="image-placeholder" aria-hidden="true">{{ business.name.slice(0, 1) }}</div>
+          }
+          <div class="product-details">
+            <h3>{{ business.name }}</h3>
+            <p>{{ business.description }}</p>
+            <span class="business-card-link" [style.color]="business.brand_accent">Browse storefront →</span>
+          </div>
+        </a>
+        }
+      </div>
+      } @else {
+      <div class="empty-state compact"><p>No businesses match that search.</p></div>
+      }
+    </section>
+    }
+
+    <section class="intro">
+      <div>
+        <p class="eyebrow">
+          {{ selectedBusiness ? 'RENT DIRECTLY FROM THIS BUSINESS' : 'ONE PLATFORM, MANY BUSINESSES' }}
+        </p>
+        <h1>{{ selectedBusiness ? 'Equipment for your event.' : 'Make room for a good gathering.' }}</h1>
+        <p>
+          {{ selectedBusiness ? 'Choose this business’s equipment and rental package.' : 'Compare karaoke equipment,
+          packages, and rental businesses in one place.' }}
+        </p>
+      </div>
+      <p class="intro-note">
+        Choose your items and rental window. The selected business reviews your request before it is confirmed.
+      </p>
+    </section>
+
+    @if (notice) {
+    <div class="notice" role="status">{{ notice }}</div>
+    } @if (error) {
+    <div class="error" role="alert">{{ error }}</div>
+    }
+
+    <section class="rental-window" aria-labelledby="window-title">
+      <div class="rental-window-intro">
+        <p class="eyebrow">CHECK AVAILABILITY</p>
+        <h2 id="window-title">When do you need it?</h2>
+        <p id="availability-help">Choose your rental start and end date/time to check equipment availability.</p>
+      </div>
+      <div class="rental-fields">
+        <label for="rental-start">
+          <span>Rental starts</span>
+          <input
+            id="rental-start"
+            type="datetime-local"
+            name="startsAt"
+            aria-describedby="availability-help"
+            [(ngModel)]="startsInput"
+            (change)="onRentalWindowChanged()"
+          />
+        </label>
+        <label for="rental-end">
+          <span>Rental ends</span>
+          <input
+            id="rental-end"
+            type="datetime-local"
+            name="endsAt"
+            [min]="startsInput || null"
+            [attr.aria-invalid]="rentalWindowError ? 'true' : null"
+            [attr.aria-describedby]="rentalWindowError ? 'rental-window-error' : 'availability-help'"
+            [(ngModel)]="endsInput"
+            (change)="onRentalWindowChanged()"
+          />
+        </label>
+      </div>
+      @if (rentalWindowError) {
+      <p class="rental-window-error" id="rental-window-error" role="alert">{{ rentalWindowError }}</p>
+      }
+    </section>
+
+    <section class="catalog-section" aria-labelledby="catalog-title">
+      <div class="section-heading">
+        <div>
+          <p class="eyebrow">THE CATALOG</p>
+          <h2 id="catalog-title">{{ selectedBusiness ? 'Equipment for your event' : 'Browse rental equipment' }}</h2>
+        </div>
+        <div class="filters">
+          <ion-input
+            aria-label="Search equipment"
+            placeholder="Search equipment"
+            [(ngModel)]="search"
+            name="search"
+            (keyup.enter)="loadCatalog()"
+          ></ion-input>
+          <ion-select aria-label="Category" placeholder="All categories" [(ngModel)]="category" name="category">
+            <ion-select-option value="">All categories</ion-select-option>
+            @for (item of categories; track item.id) {
+            <ion-select-option [value]="item.name">{{ item.name }}</ion-select-option>
+            }
+          </ion-select>
+          @if (selectedBusiness) {
+          <ion-select aria-label="Quality" placeholder="All quality" [(ngModel)]="qualityTier" name="quality">
+            <ion-select-option value="">All quality</ion-select-option>
+            @for (tier of tiers; track tier.id) {
+            <ion-select-option [value]="tier.id">{{ tier.name }}</ion-select-option>
+            }
+          </ion-select>
+          }
+          <ion-select aria-label="Sort products" [(ngModel)]="sort" name="sort">
+            <ion-select-option value="name">Name</ion-select-option>
+            <ion-select-option value="price_asc">Price: low to high</ion-select-option>
+            <ion-select-option value="price_desc">Price: high to low</ion-select-option>
+            <ion-select-option value="quality">Quality</ion-select-option>
+          </ion-select>
+          <ion-button fill="outline" (click)="loadCatalog()">Apply</ion-button>
+        </div>
+      </div>
+
+      @if (loading) {
+      <div class="loading"><ion-spinner name="crescent"></ion-spinner><span>Loading catalog…</span></div>
+      } @else if (products.length === 0) {
+      <div class="empty-state">
+        <h3>No matching equipment</h3>
+        <p>Try changing the search or filters, or check back after inventory is updated.</p>
+      </div>
+      } @else {
+      <div class="product-grid">
+        @for (product of products; track product.id) {
+        <article class="product-card">
+          @if (product.image_url) {
+          <img [src]="product.image_url" [alt]="product.name" loading="lazy" />
+          } @else {
+          <div class="image-placeholder" aria-hidden="true">{{ categoryLabel(product.category) }}</div>
+          }
+          <div class="product-details">
+            <div class="product-meta">
+              <span>{{ categoryLabel(product.category) }}</span>
+              <span class="quality">{{ product.quality_name }}</span>
+            </div>
+            <h3>{{ product.name }}</h3>
+            <p>{{ product.description || 'A quality rental option for your event.' }}</p>
+            <div class="product-bottom">
+              <div>
+                <strong>{{ priceLabel(product.price_cents, product.pricing_configured) }}</strong>
+                @if (product.available_count !== null) {
+                <small>{{ product.available_count }} available for selected dates</small>
+                } @else {
+                <small>{{ product.stock_count }} in available condition · select dates to check</small>
+                }
+              </div>
+              <ion-button
+                size="small"
+                fill="outline"
+                [disabled]="product.available_count === 0"
+                (click)="addProduct(product)"
+                >Add</ion-button
+              >
+            </div>
+          </div>
+        </article>
+        }
+      </div>
+      }
+    </section>
+
+    <section class="catalog-section packages" aria-labelledby="packages-title">
+      <div class="section-heading">
+        <div>
+          <p class="eyebrow">READY-MADE COMBINATIONS</p>
+          <h2 id="packages-title">Rental packages</h2>
+        </div>
+      </div>
+      @if (packages.length === 0) {
+      <div class="empty-state compact">
+        <p>There are no active packages yet. An administrator can add packages and their included equipment.</p>
+      </div>
+      } @else {
+      <div class="package-list">
+        @for (rentalPackage of packages; track rentalPackage.id) {
+        <article class="package-card">
+          @if (rentalPackage.image_url) {
+          <img [src]="rentalPackage.image_url" [alt]="rentalPackage.name" loading="lazy" />
+          }
+          <div class="package-info">
+            <h3>{{ rentalPackage.name }}</h3>
+            <p>{{ rentalPackage.description }}</p>
+            <ul>
+              @for (component of rentalPackage.components; track component.product_id) {
+              <li>{{ component.quantity }} × {{ component.name }} · {{ component.quality_name }}</li>
+              }
+            </ul>
+          </div>
+          <div class="package-action">
+            <strong>{{ priceLabel(rentalPackage.price_cents, rentalPackage.pricing_configured) }}</strong>
+            @if (rentalPackage.available_count !== null) {
+            <small>{{ rentalPackage.available_count }} packages available</small>
+            }
+            <ion-button
+              size="small"
+              [disabled]="rentalPackage.available_count === 0"
+              (click)="addPackage(rentalPackage)"
+              >Add package</ion-button
+            >
+          </div>
+        </article>
+        }
+      </div>
+      }
+    </section>
+
+    <section id="rental-request" class="request-panel" aria-labelledby="request-title">
+      <div class="request-copy">
+        <p class="eyebrow">YOUR SELECTION</p>
+        <h2 id="request-title">Review rental request</h2>
+        <p>
+          Catalog prices remain estimates until the administrator configures the billing basis for every selected item.
+        </p>
+      </div>
+      @if (cart.length === 0) {
+      <div class="empty-state compact"><p>Your selection is empty. Add equipment or a package to get started.</p></div>
+      } @else {
+      <div class="cart-lines">
+        @for (item of cart; track item.key) {
+        <div class="cart-line">
+          <div>
+            <strong>{{ item.name }}</strong>
+            <small>{{ priceLabel(item.price_cents, item.pricing_configured) }}</small>
+          </div>
+          <label>
+            <span class="visually-hidden">Quantity for {{ item.name }}</span>
+            <input
+              type="number"
+              min="0"
+              max="1000"
+              [ngModel]="item.quantity"
+              [name]="'quantity-' + item.key"
+              (ngModelChange)="changeQuantity(item.key, $event)"
+            />
+          </label>
+        </div>
+        }
+      </div>
+      @if (quoteTotal !== null) {
+      <div class="quote-total">
+        <span>Estimated total</span>
+        <strong>{{ quoteTotal / 100 | currency: 'PHP' : 'symbol' : '1.2-2' : 'en-PH' }}</strong>
+        <small>Final availability and total are checked again when submitted.</small>
+      </div>
+      }
+      <div class="request-actions">
+        <ion-button
+          fill="outline"
+          [disabled]="loading || cart.some(item => !item.pricing_configured)"
+          (click)="calculateQuote()"
+        >
+          Calculate estimate
+        </ion-button>
+        <ion-button [disabled]="submitting || quoteTotal === null" (click)="submitOrder()">
+          {{ submitting ? 'Submitting…' : 'Submit rental request' }}
+        </ion-button>
+      </div>
+      @if (cart.some(item => !item.pricing_configured)) {
+      <p class="policy-note">
+        Checkout is unavailable until an administrator configures the pricing basis for every selected item.
+      </p>
+      } @if (!user()) {
+      <p class="policy-note">
+        A customer account is required to submit an order. <a routerLink="/account">Sign in or register</a>.
+      </p>
+      } }
+    </section>
+  </main>
+</ion-content>

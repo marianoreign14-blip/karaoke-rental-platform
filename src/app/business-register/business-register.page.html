@@ -1,0 +1,86 @@
+<header class="topbar">
+  <a class="brand" routerLink="/home">KARAOKE</a>
+  <nav><a routerLink="/home">Marketplace</a><a routerLink="/account">Sign in</a></nav>
+</header>
+
+<main>
+  <section class="registration-panel">
+    <p class="eyebrow">JOIN THE MARKETPLACE</p>
+    <h1>Register your rental business</h1>
+    <p class="intro">
+      Submit your business details for review. A platform administrator must approve your application before you can
+      manage a storefront.
+    </p>
+
+    @if (error) {
+    <p class="message error" role="alert">{{ error }}</p>
+    } @if (notice) {
+    <p class="message notice" role="status">{{ notice }}</p>
+    } @if (!notice) {
+    <form (ngSubmit)="submit()">
+      <label>
+        Business name
+        <input [(ngModel)]="businessName" name="businessName" autocomplete="organization" maxlength="160" required />
+      </label>
+      <label>
+        Owner name
+        <input [(ngModel)]="ownerName" name="ownerName" autocomplete="name" maxlength="120" required />
+      </label>
+      <label>
+        Email
+        <input
+          [(ngModel)]="email"
+          name="email"
+          type="email"
+          autocomplete="email"
+          autocapitalize="off"
+          maxlength="320"
+          required
+        />
+      </label>
+      <label>
+        Contact number
+        <input
+          [(ngModel)]="contactNumber"
+          name="contactNumber"
+          type="tel"
+          autocomplete="tel"
+          minlength="7"
+          maxlength="40"
+          required
+        />
+      </label>
+      <label class="wide">
+        Business address
+        <textarea
+          [(ngModel)]="address"
+          name="address"
+          autocomplete="street-address"
+          minlength="5"
+          maxlength="500"
+          rows="3"
+          required
+        ></textarea>
+      </label>
+      <label class="wide">
+        Password
+        <input
+          [(ngModel)]="password"
+          name="password"
+          type="password"
+          autocomplete="new-password"
+          minlength="12"
+          maxlength="128"
+          required
+        />
+        <small>Use at least 12 characters. Your password is stored as a secure hash.</small>
+      </label>
+      <button class="submit-button wide" type="submit" [disabled]="saving">
+        {{ saving ? 'Submitting…' : 'Submit for approval' }}
+      </button>
+    </form>
+    } @else {
+    <a class="submit-button done-button" routerLink="/account">Go to sign in</a>
+    }
+  </section>
+</main>

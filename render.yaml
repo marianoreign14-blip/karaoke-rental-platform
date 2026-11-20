@@ -1,0 +1,41 @@
+services:
+  - type: web
+    name: karaoke-marketplace-api
+    runtime: python
+    plan: 0.5c-512mb
+    buildCommand: pip install -r backend/requirements.txt
+    preDeployCommand: alembic -c backend/alembic.ini upgrade head
+    startCommand: uvicorn app.main:app --app-dir backend --host 0.0.0.0 --port $PORT
+    healthCheckPath: /api/health
+    autoDeployTrigger: checksPass
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.11.11
+      - key: DATABASE_URL
+        sync: false
+      - key: ALEMBIC_DATABASE_URL
+        sync: false
+      - key: SECRET_KEY
+        sync: false
+      - key: CORS_ORIGINS
+        value: '["https://karaoke-marketplace.onrender.com"]'
+
+  - type: web
+    name: karaoke-marketplace
+    runtime: static
+    buildCommand: npm ci && npm run build
+    staticPublishPath: ./www
+    autoDeployTrigger: checksPass
+    envVars:
+      - key: NODE_VERSION
+        value: 22.12.0
+    routes:
+      - type: rewrite
+        source: /api
+        destination: https://karaoke-marketplace-api.onrender.com/api
+      - type: rewrite
+        source: /api/*
+        destination: https://karaoke-marketplace-api.onrender.com/api/*
+      - type: rewrite
+        source: /*
+        destination: /index.html

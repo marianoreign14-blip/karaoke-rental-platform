@@ -1,0 +1,158 @@
+:host {
+  --ink: #252729;
+  --muted: #696b70;
+  --line: #e5dfd2;
+  --accent: #a63d40;
+  display: block;
+  color: var(--ink);
+}
+
+.topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-height: 68px;
+  padding: 0 clamp(16px, 5vw, 72px);
+  border-bottom: 1px solid var(--line);
+  background: #fffdf8;
+
+  nav {
+    display: flex;
+    gap: 20px;
+  }
+
+  nav a {
+    color: var(--accent);
+    font-size: 13px;
+    text-decoration: none;
+  }
+}
+
+.brand {
+  color: var(--ink);
+  font-weight: 800;
+  text-decoration: none;
+}
+
+main {
+  width: min(760px, calc(100% - 32px));
+  margin: 0 auto;
+  padding: 42px 0 80px;
+}
+
+.registration-panel {
+  padding: clamp(20px, 4vw, 36px);
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  background: #fffdf8;
+  box-shadow: 0 18px 48px rgba(75, 58, 38, 0.07);
+
+  h1 {
+    margin: 8px 0;
+    font-size: clamp(28px, 4vw, 42px);
+    letter-spacing: -0.045em;
+  }
+
+  .intro {
+    margin: 0 0 22px;
+    color: var(--muted);
+    line-height: 1.55;
+  }
+}
+
+.eyebrow {
+  margin: 0;
+  color: var(--accent);
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.13em;
+}
+
+form {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+}
+
+label {
+  display: grid;
+  gap: 7px;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+input,
+textarea {
+  width: 100%;
+  min-height: 44px;
+  padding: 10px 12px;
+  border: 1px solid #d5ccba;
+  border-radius: 8px;
+  background: white;
+  color: var(--ink);
+  font: inherit;
+}
+
+textarea {
+  resize: vertical;
+}
+
+small {
+  color: var(--muted);
+  font-weight: 400;
+}
+
+.wide {
+  grid-column: 1 / -1;
+}
+
+.submit-button {
+  display: inline-flex;
+  justify-content: center;
+  align-items: center;
+  min-height: 44px;
+  padding: 10px 16px;
+  border: 1px solid var(--accent);
+  border-radius: 7px;
+  background: var(--accent);
+  color: white;
+  font: inherit;
+  font-weight: 700;
+  text-decoration: none;
+  cursor: pointer;
+
+  &:disabled {
+    opacity: 0.55;
+    cursor: not-allowed;
+  }
+}
+
+.done-button {
+  margin-top: 16px;
+}
+
+.message {
+  padding: 12px;
+  border-radius: 8px;
+  font-size: 13px;
+}
+
+.error {
+  background: #fff0ed;
+  color: #8c2f24;
+}
+
+.notice {
+  background: #edf5ef;
+  color: #315d3d;
+}
+
+@media (max-width: 600px) {
+  form {
+    grid-template-columns: 1fr;
+  }
+
+  .wide {
+    grid-column: auto;
+  }
+}

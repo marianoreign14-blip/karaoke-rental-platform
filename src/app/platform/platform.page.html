@@ -1,0 +1,210 @@
+<header class="topbar">
+  <a class="brand" routerLink="/home">KARAOKE</a>
+  <nav><a routerLink="/home">Marketplace</a><a routerLink="/account">My account</a></nav>
+</header>
+
+<main>
+  <section class="page-heading">
+    <div>
+      <p class="eyebrow">PLATFORM ADMINISTRATION</p>
+      <h1>Marketplace control center</h1>
+      <p>Review businesses, manage access and subscriptions, and configure platform defaults.</p>
+    </div>
+    <button type="button" class="secondary-button" (click)="refresh()" [disabled]="loading">
+      {{ loading ? 'Refreshing…' : 'Refresh data' }}
+    </button>
+  </section>
+
+  @if (error) {
+  <p class="message error" role="alert">{{ error }}</p>
+  } @if (notice) {
+  <p class="message notice" role="status">{{ notice }}</p>
+  } @if (summary) {
+  <section class="stats-grid" aria-label="Platform statistics">
+    <article><span>Total businesses</span><strong>{{ summary.businesses }}</strong></article>
+    <article><span>Active businesses</span><strong>{{ summary.active_businesses }}</strong></article>
+    <article><span>Awaiting approval</span><strong>{{ summary.pending_businesses }}</strong></article>
+    <article><span>Customers</span><strong>{{ summary.customers }}</strong></article>
+    <article><span>Rental requests</span><strong>{{ summary.orders }}</strong></article>
+  </section>
+  }
+
+  <section class="panel">
+    <div class="section-heading">
+      <div>
+        <p class="eyebrow">TENANT DIRECTORY</p>
+        <h2>Registered businesses</h2>
+      </div>
+      <input [(ngModel)]="search" name="businessSearch" type="search" placeholder="Search business or owner" />
+    </div>
+    <div class="business-list">
+      @for (business of filteredBusinesses; track business.id) {
+      <article class="business-card">
+        <div class="business-heading">
+          @if (business.logo_url) {
+          <img [src]="business.logo_url" [alt]="business.name + ' logo'" />
+          }
+          <div>
+            <h3>{{ business.name }}</h3>
+            <p>{{ business.owner_name || 'No owner record' }} · {{ business.owner_email || 'No email' }}</p>
+            <small>Created {{ business.created_at | date: 'mediumDate' }} · {{ business.slug }}</small>
+          </div>
+          <div class="state-tags">
+            <span class="tag" [class.pending]="business.status === 'pending'">{{ business.status }}</span>
+            <span class="tag">{{ business.subscription_plan }} · {{ business.subscription_status }}</span>
+            <span class="tag">{{ business.is_listed ? 'Listed' : 'Hidden' }}</span>
+          </div>
+        </div>
+        <p class="business-description">{{ business.description || 'No storefront description provided.' }}</p>
+        <div class="business-actions">
+          @if (business.status === 'pending') {
+          <button type="button" (click)="changeStatus(business, 'active')" [disabled]="saving">Approve</button>
+          <button type="button" class="danger-button" (click)="changeStatus(business, 'rejected')" [disabled]="saving">
+            Reject
+          </button>
+          } @if (business.status === 'active') {
+          <button type="button" class="secondary-button" (click)="toggleListing(business)" [disabled]="saving">
+            {{ business.is_listed ? 'Hide listing' : 'Publish listing' }}
+          </button>
+          <button type="button" class="danger-button" (click)="changeStatus(business, 'suspended')" [disabled]="saving">
+            Suspend
+          </button>
+          } @if (business.status === 'suspended') {
+          <button type="button" (click)="changeStatus(business, 'active')" [disabled]="saving">Reactivate</button>
+          }
+          <button type="button" class="text-button" (click)="openSubscription(business)">Manage subscription</button>
+        </div>
+
+        @if (subscriptionBusinessId === business.id) {
+        <div class="inline-form">
+          <label>
+            Plan
+            <input [(ngModel)]="subscriptionPlan" [name]="'plan-' + business.id" maxlength="40" required />
+          </label>
+          <label>
+            Status
+            <select [(ngModel)]="subscriptionStatus" [name]="'subscription-status-' + business.id">
+              <option value="active">Active</option>
+              <option value="trialing">Trialing</option>
+              <option value="past_due">Past due</option>
+              <option value="cancelled">Cancelled</option>
+            </select>
+          </label>
+          <label>
+            Ends at (optional)
+            <input type="datetime-local" [(ngModel)]="subscriptionEndsAt" [name]="'subscription-end-' + business.id" />
+          </label>
+          <button type="button" (click)="saveSubscription()" [disabled]="saving">Save subscription</button>
+          <button type="button" class="text-button" (click)="subscriptionBusinessId = null">Cancel</button>
+        </div>
+        }
+      </article>
+      } @empty {
+      <p class="empty-state">No businesses match this search.</p>
+      }
+    </div>
+  </section>
+
+  <section class="panel">
+    <p class="eyebrow">AUDIT LOG</p>
+    <h2>Recent platform and business activity</h2>
+    <div class="activity-list">
+      @for (event of activity; track event.id) {
+      <article>
+        <div>
+          <strong>{{ event.action.replaceAll('_', ' ') }}</strong>
+          <span>{{ event.business_name || 'Platform' }} · {{ event.entity_type }} #{{ event.entity_id || '—' }}</span>
+        </div>
+        <small>{{ event.created_at | date: 'short' }} · account #{{ event.actor_id }}</small>
+      </article>
+      } @empty {
+      <p class="empty-state">No administrative activity recorded.</p>
+      }
+    </div>
+  </section>
+
+  <section class="admin-columns">
+    <div class="panel">
+      <p class="eyebrow">BUSINESS ACCESS</p>
+      <h2>Create a business administrator</h2>
+      <form class="form-grid" (ngSubmit)="createBusinessAdmin()">
+        <label class="wide">
+          Active business
+          <select [(ngModel)]="adminBusinessId" name="adminBusiness" required>
+            <option value="">Select a business</option>
+            @for (business of businesses; track business.id) { @if (business.status === 'active') {
+            <option [value]="business.id">{{ business.name }}</option>
+            } }
+          </select>
+        </label>
+        <label>Name <input [(ngModel)]="adminName" name="adminName" maxlength="120" required /></label>
+        <label>Email <input [(ngModel)]="adminEmail" name="adminEmail" type="email" maxlength="320" required /></label>
+        <label>Phone (optional) <input [(ngModel)]="adminPhone" name="adminPhone" maxlength="40" /></label>
+        <label
+          >Password (12+ characters)
+          <input
+            [(ngModel)]="adminPassword"
+            name="adminPassword"
+            type="password"
+            minlength="12"
+            maxlength="128"
+            required
+        /></label>
+        <button class="wide" type="submit" [disabled]="saving">Create administrator</button>
+      </form>
+    </div>
+
+    <div class="panel">
+      <p class="eyebrow">PLATFORM SETTINGS</p>
+      <h2>Marketplace defaults</h2>
+      <div class="settings-list">
+        <label>
+          Marketplace name
+          <div>
+            <input [(ngModel)]="settings['marketplace_name']" name="marketplaceName" maxlength="100" /><button
+              type="button"
+              (click)="saveSetting('marketplace_name')"
+              [disabled]="saving"
+            >
+              Save
+            </button>
+          </div>
+        </label>
+        <label>
+          Support email
+          <div>
+            <input [(ngModel)]="settings['support_email']" name="supportEmail" type="email" maxlength="320" /><button
+              type="button"
+              (click)="saveSetting('support_email')"
+              [disabled]="saving"
+            >
+              Save
+            </button>
+          </div>
+        </label>
+        <label>
+          Default subscription plan
+          <div>
+            <input [(ngModel)]="settings['default_subscription_plan']" name="defaultPlan" maxlength="100" /><button
+              type="button"
+              (click)="saveSetting('default_subscription_plan')"
+              [disabled]="saving"
+            >
+              Save
+            </button>
+          </div>
+        </label>
+        <label class="setting-toggle">
+          <input
+            [ngModel]="settings['maintenance_mode'] === 'true'"
+            name="maintenanceMode"
+            type="checkbox"
+            (ngModelChange)="settings['maintenance_mode'] = $event ? 'true' : 'false'"
+          />
+          Maintenance mode
+          <button type="button" (click)="saveSetting('maintenance_mode')" [disabled]="saving">Save</button>
+        </label>
+      </div>
+    </div>
+  </section>
+</main>

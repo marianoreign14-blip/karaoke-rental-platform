@@ -1,0 +1,338 @@
+<ion-header class="account-header">
+  <div class="account-topbar">
+    <a class="brand" routerLink="/home" aria-label="KARAOKE home">KARAOKE</a>
+    @if (!user || user.role === 'customer') {
+    <span class="page-context">Customer account</span>
+    }
+    <a class="back-link" routerLink="/home">Browse rentals</a>
+  </div>
+</ion-header>
+
+<ion-content>
+  <main>
+    @if (error) {
+    <div class="message error" role="alert">{{ error }}</div>
+    } @if (notice) {
+    <div class="message notice" role="status">{{ notice }}</div>
+    } @if (!user) {
+    <section class="auth-panel">
+      <p class="eyebrow">CUSTOMER ACCOUNT</p>
+      <h1>{{ mode === 'login' ? 'Sign in to your account' : 'Create your account' }}</h1>
+      <p>
+        {{ mode === 'login' ? 'Sign in to track rental requests, update your profile, and manage payments.' : 'Create an
+        account to request equipment and keep track of your rentals.' }}
+      </p>
+      <form (ngSubmit)="authenticate()">
+        @if (mode === 'register') {
+        <label>
+          Full name
+          <input [(ngModel)]="displayName" name="displayName" autocomplete="name" required maxlength="120" />
+        </label>
+        <label>
+          Phone (optional)
+          <input [(ngModel)]="phone" name="phone" autocomplete="tel" maxlength="40" />
+        </label>
+        }
+        <label>
+          Email
+          <input
+            [(ngModel)]="email"
+            name="email"
+            type="email"
+            autocomplete="username"
+            autocapitalize="off"
+            spellcheck="false"
+            placeholder="you@example.com"
+            required
+            maxlength="320"
+          />
+        </label>
+        <div class="auth-field">
+          <label for="account-password">Password</label>
+          <div class="password-control">
+            <input
+              id="account-password"
+              [(ngModel)]="password"
+              name="password"
+              [type]="showPassword ? 'text' : 'password'"
+              [attr.autocomplete]="mode === 'register' ? 'new-password' : 'current-password'"
+              [minlength]="mode === 'register' ? 12 : null"
+              [placeholder]="mode === 'register' ? 'At least 12 characters' : 'Enter your password'"
+              required
+            />
+            <button
+              class="password-toggle"
+              type="button"
+              [attr.aria-label]="showPassword ? 'Hide password' : 'Show password'"
+              [attr.aria-pressed]="showPassword"
+              (click)="showPassword = !showPassword"
+            >
+              {{ showPassword ? 'Hide' : 'Show' }}
+            </button>
+          </div>
+          @if (mode === 'register') {
+          <small>Use at least 12 characters.</small>
+          }
+        </div>
+        <button type="submit" [disabled]="saving">
+          @if (saving) {
+          <ion-spinner name="crescent" aria-hidden="true"></ion-spinner>
+          <span>{{ mode === 'login' ? 'Signing in…' : 'Creating account…' }}</span>
+          } @else { {{ mode === 'login' ? 'Sign in' : 'Create account' }} }
+        </button>
+      </form>
+      <div class="auth-switch">
+        <span>{{ mode === 'login' ? 'New to the rental shop?' : 'Already have an account?' }}</span>
+        <button class="text-button" type="button" (click)="toggleAuthMode()">
+          {{ mode === 'login' ? 'Create an account' : 'Sign in' }}
+        </button>
+      </div>
+      <a class="business-register-link" routerLink="/business-register">Register a rental business</a>
+    </section>
+    } @else if (user.role === 'business_pending') {
+    <section class="auth-panel" aria-live="polite">
+      <p class="eyebrow">BUSINESS REGISTRATION</p>
+      <h1>Application under review</h1>
+      <p>
+        Your business registration is waiting for platform administrator approval. Business management access will be
+        enabled after approval.
+      </p>
+      <button class="text-button" type="button" (click)="signOut()">Sign out</button>
+    </section>
+    } @else {
+    <section class="page-heading">
+      <div>
+        <p class="eyebrow">MY ACCOUNT</p>
+        <h1>Hello, {{ user.display_name }}</h1>
+        <p>{{ user.email }}</p>
+      </div>
+      <div class="heading-actions">
+        @if (user.role === 'business_admin' || user.role === 'business_staff') {
+        <a class="secondary-button" routerLink="/admin">Administration</a>
+        } @if (user.role === 'platform_admin') {
+        <a class="secondary-button" routerLink="/platform">Platform administration</a>
+        }
+        <button class="text-button" type="button" (click)="signOut()">Sign out</button>
+      </div>
+    </section>
+
+    <section class="profile-panel">
+      <div>
+        <p class="eyebrow">PROFILE DETAILS</p>
+        <h2>Contact information</h2>
+      </div>
+      <form class="profile-form" (ngSubmit)="saveProfile()">
+        <label>
+          Display name
+          <input [(ngModel)]="profileName" name="profileName" required maxlength="120" />
+        </label>
+        <label>
+          Phone
+          <input [(ngModel)]="profilePhone" name="profilePhone" maxlength="40" />
+        </label>
+        <button type="submit" [disabled]="saving">Save profile</button>
+      </form>
+    </section>
+
+    <section class="orders-section">
+      <div class="section-title">
+        <div>
+          <p class="eyebrow">RENTAL HISTORY</p>
+          <h2>Your orders</h2>
+        </div>
+        @if (loading) {
+        <ion-spinner name="crescent"></ion-spinner>
+        }
+      </div>
+      @if (!loading && orders.length === 0) {
+      <div class="empty-state">
+        <h3>No rental requests yet</h3>
+        <p>When you submit a request from the catalog, its status and details will appear here.</p>
+        <a routerLink="/home">Browse equipment</a>
+      </div>
+      } @for (order of orders; track order.id) {
+      <article class="order-card">
+        <header>
+          <div>
+            <p class="eyebrow">ORDER #{{ order.id }}</p>
+            <h3>{{ order.starts_at | date: 'medium' }} – {{ order.ends_at | date: 'medium' }}</h3>
+          </div>
+          <div class="status-pills">
+            <span class="status">{{ order.status.replace('_', ' ') }}</span>
+            <span class="status payment">{{ paymentStatus(order.payment_status) }}</span>
+          </div>
+        </header>
+        <div class="order-lines">
+          @for (line of order.lines; track line.id) {
+          <div>
+            <span>{{ line.quantity }} × {{ line.name }}</span>
+            <strong>{{ line.line_total_cents / 100 | currency: 'PHP' : 'symbol' : '1.2-2' : 'en-PH' }}</strong>
+          </div>
+          }
+        </div>
+        <div class="order-total">
+          <span>Total · paid · balance</span>
+          <strong>
+            {{ order.total_cents / 100 | currency: 'PHP' : 'symbol' : '1.2-2' : 'en-PH' }} · {{ order.paid_cents / 100 |
+            currency: 'PHP' : 'symbol' : '1.2-2' : 'en-PH' }} · {{ order.balance_cents / 100 | currency: 'PHP' :
+            'symbol' : '1.2-2' : 'en-PH' }}
+          </strong>
+        </div>
+
+        @if (order.requests.length > 0) {
+        <div class="history-list">
+          <h4>Change and cancellation requests</h4>
+          @for (request of order.requests; track request.id) {
+          <p>{{ request.kind }} · {{ request.status }} · {{ request.reason }}</p>
+          }
+        </div>
+        } @if (order.payments.length > 0) {
+        <div class="history-list">
+          <h4>Payment history</h4>
+          @for (payment of order.payments; track payment.id) {
+          <p>
+            {{ payment.paid_at | date: 'short' }} · {{ payment.amount_cents / 100 | currency: 'PHP' : 'symbol' : '1.2-2'
+            : 'en-PH' }} · {{ payment.method }} · {{ payment.status }} @if (payment.reference_number) { · Ref {{
+            payment.reference_number }} } @if (payment.verified_by_id) { · Reviewed by admin #{{ payment.verified_by_id
+            }} }
+          </p>
+          @if (payment.proof_available) {
+          <button type="button" class="text-button" (click)="viewPaymentProof(order.id, payment.id)">
+            View payment proof
+          </button>
+          @if (paymentProofPreviews[payment.id]) {
+          <img class="payment-proof-preview" [src]="paymentProofPreviews[payment.id]" alt="Uploaded payment proof" />
+          } } }
+        </div>
+        } @if (order.history.length > 0) {
+        <details class="history-list">
+          <summary>Order activity</summary>
+          @for (event of order.history; track $index) {
+          <p>
+            {{ event.created_at | date: 'short' }} · {{ event.action.replace('_', ' ') }} · admin/customer #{{
+            event.actor_id }}
+          </p>
+          }
+        </details>
+        }
+        <div class="order-actions">
+          @if (canRequest(order)) {
+          <button class="secondary-button" type="button" (click)="beginModification(order)">Request a change</button>
+          <button class="text-button danger" type="button" (click)="requestCancellation(order)">
+            Request cancellation
+          </button>
+          } @if (order.balance_cents > 0 && canRequest(order)) {
+          <button class="secondary-button" type="button" (click)="paymentOrderId = order.id">
+            Submit payment information
+          </button>
+          }
+          <button class="text-button" type="button" (click)="printSummary()">Print summary</button>
+        </div>
+
+        @if (editingOrderId === order.id) {
+        <section class="request-editor">
+          <h4>Proposed order changes</h4>
+          <div class="editor-dates">
+            <label>Start <input type="datetime-local" [(ngModel)]="draftStart" [name]="'start-' + order.id" /></label>
+            <label>End <input type="datetime-local" [(ngModel)]="draftEnd" [name]="'end-' + order.id" /></label>
+          </div>
+          @for (line of draftLines; track $index) {
+          <div class="draft-line">
+            <ion-select
+              aria-label="Requested product or package"
+              [ngModel]="line.kind + ':' + line.item_id"
+              [name]="'item-' + order.id + '-' + $index"
+              (ngModelChange)="updateDraftItem($index, $event)"
+            >
+              @for (item of items; track item.key) {
+              <ion-select-option [value]="item.key">{{ item.label }}</ion-select-option>
+              }
+            </ion-select>
+            <input
+              type="number"
+              min="1"
+              max="1000"
+              [(ngModel)]="line.quantity"
+              [name]="'qty-' + order.id + '-' + $index"
+              aria-label="Quantity"
+            />
+            <button class="text-button danger" type="button" (click)="removeDraftLine($index)">Remove</button>
+          </div>
+          }
+          <div class="add-line">
+            <ion-select
+              aria-label="Add product or package"
+              placeholder="Add product or package"
+              [(ngModel)]="selectedItemKey"
+              name="selectedItem"
+            >
+              @for (item of items; track item.key) {
+              <ion-select-option [value]="item.key">{{ item.label }}</ion-select-option>
+              }
+            </ion-select>
+            <button class="secondary-button" type="button" (click)="addDraftLine()">Add item</button>
+          </div>
+          <label
+            >Reason <textarea [(ngModel)]="requestReason" [name]="'reason-' + order.id" maxlength="2000"></textarea>
+          </label>
+          <div class="order-actions">
+            <button type="button" (click)="submitModification()" [disabled]="saving">Send change request</button>
+            <button class="text-button" type="button" (click)="editingOrderId = null">Close</button>
+          </div>
+          <p class="policy-note">
+            Changes are not applied and stock is not reallocated unless an administrator approves the request.
+          </p>
+        </section>
+        } @if (paymentOrderId === order.id) {
+        <section class="request-editor">
+          <h4>Payment details for administrator review</h4>
+          <div class="payment-form">
+            <label
+              >Amount (₱)
+              <input type="number" min="0.01" step="0.01" [(ngModel)]="paymentAmount" [name]="'amount-' + order.id"
+            /></label>
+            <label>
+              Method
+              <select [(ngModel)]="paymentMethod" [name]="'method-' + order.id">
+                <option value="cash">Cash</option>
+                <option value="gcash">GCash</option>
+                <option value="bank_transfer">Bank Transfer</option>
+              </select>
+            </label>
+            <label
+              >Paid at <input type="datetime-local" [(ngModel)]="paymentDate" [name]="'paid-at-' + order.id"
+            /></label>
+            <label
+              >Reference number <input [(ngModel)]="paymentReference" [name]="'reference-' + order.id" maxlength="160"
+            /></label>
+          </div>
+          <label
+            >Notes
+            <textarea [(ngModel)]="paymentNotes" [name]="'payment-notes-' + order.id" maxlength="1000"></textarea>
+          </label>
+          <label class="proof-upload"
+            >Payment proof image (optional, JPEG/PNG/WebP, 5 MB max)
+            <input type="file" accept="image/jpeg,image/png,image/webp" (change)="selectPaymentProof($event)" />
+          </label>
+          @if (paymentProofPreviewUrl) {
+          <img class="payment-proof-preview" [src]="paymentProofPreviewUrl" alt="Payment proof preview" />
+          }
+          <div class="order-actions">
+            @if (pendingProofPaymentId) {
+            <button type="button" (click)="retryPaymentProof()" [disabled]="saving">Retry proof upload</button>
+            } @else {
+            <button type="button" (click)="submitPayment()" [disabled]="saving">Submit for verification</button>
+            }
+            <button class="text-button" type="button" (click)="paymentOrderId = null">Close</button>
+          </div>
+          <p class="policy-note">
+            Submitted payment information does not change your paid balance until verified by an administrator.
+          </p>
+        </section>
+        }
+      </article>
+      }
+    </section>
+    }
+  </main>
+</ion-content>

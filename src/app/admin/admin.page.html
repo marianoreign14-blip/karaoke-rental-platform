@@ -1,0 +1,824 @@
+<header class="topbar">
+  <a class="brand" routerLink="/home">KARAOKE</a>
+  <nav><a routerLink="/home">Marketplace</a><a routerLink="/account">My account</a></nav>
+</header>
+
+<main>
+  <section class="page-heading">
+    <div>
+      <p class="eyebrow">BUSINESS OPERATIONS</p>
+      <h1>{{ business?.name || 'Rental administration' }}</h1>
+      <p>Manage products, stock, customer orders, and manually verified payments.</p>
+    </div>
+    <button class="secondary-button" type="button" (click)="refresh()" [disabled]="loading">
+      {{ loading ? 'Refreshing…' : 'Refresh data' }}
+    </button>
+  </section>
+
+  @if (error) {
+  <div class="message error" role="alert">{{ error }}</div>
+  } @if (notice) {
+  <div class="message notice" role="status">{{ notice }}</div>
+  }
+
+  <nav class="section-nav" aria-label="Administration sections">
+    @for (item of visibleSections; track item.id) {
+    <button type="button" [class.active]="section === item.id" (click)="section = item.id">{{ item.label }}</button>
+    }
+  </nav>
+
+  @switch (section) { @case ('orders') {
+  <section class="admin-section">
+    <div class="section-heading">
+      <div>
+        <p class="eyebrow">REVIEW QUEUE</p>
+        <h2>Customer requests</h2>
+      </div>
+      <span class="count">{{ requests.length }} awaiting review</span>
+    </div>
+    @if (requests.length === 0) {
+    <p class="empty-state">No change or cancellation requests need review.</p>
+    } @for (request of requests; track request.id) {
+    <article class="request-card">
+      <div>
+        <span class="tag">{{ request.kind }}</span>
+        <h3>Order #{{ request.order_id }} · Customer #{{ request.customer_id }}</h3>
+        <p>{{ request.reason }}</p>
+        @if (request.proposed_data) {
+        <details>
+          <summary>Proposed replacement details</summary>
+          <pre>{{ request.proposed_data | json }}</pre>
+        </details>
+        }
+      </div>
+      <div class="actions">
+        <button type="button" (click)="decideRequest(request, true)">Approve</button>
+        <button type="button" class="danger-button" (click)="decideRequest(request, false)">Reject</button>
+      </div>
+    </article>
+    }
+
+    <div class="section-heading spaced">
+      <div>
+        <p class="eyebrow">RENTAL ORDERS</p>
+        <h2>All orders</h2>
+      </div>
+      <span class="count">{{ orders.length }} total</span>
+    </div>
+    @if (orders.length === 0) {
+    <p class="empty-state">No rental orders have been submitted.</p>
+    } @for (order of orders; track order.id) {
+    <article class="order-card">
+      <header>
+        <div>
+          <span class="tag">#{{ order.id }} · {{ order.customer_name }}</span>
+          <h3>{{ order.starts_at | date: 'medium' }} – {{ order.ends_at | date: 'medium' }}</h3>
+        </div>
+        <div class="order-status">{{ order.status.replace('_', ' ') }}</div>
+      </header>
+      <div class="order-summary">
+        <div class="order-lines">
+          @for (line of order.lines; track line.id) {
+          <p>
+            {{ line.quantity }} × {{ line.name }}
+            <span>{{ line.line_total_cents / 100 | currency: 'PHP' : 'symbol' : '1.2-2' : 'en-PH' }}</span>
+          </p>
+          }
+        </div>
+        <div class="financial-summary">
+          <span
+            >Total <strong>{{ order.total_cents / 100 | currency: 'PHP' : 'symbol' : '1.2-2' : 'en-PH' }}</strong></span
+          >
+          <span
+            >Paid <strong>{{ order.paid_cents / 100 | currency: 'PHP' : 'symbol' : '1.2-2' : 'en-PH' }}</strong></span
+          >
+          <span
+            >Balance
+            <strong>{{ order.balance_cents / 100 | currency: 'PHP' : 'symbol' : '1.2-2' : 'en-PH' }}</strong></span
+          >
+          <span class="tag">{{ order.payment_status.replace('_', ' ') }}</span>
+        </div>
+      </div>
+
+      @if (pendingPayments(order).length > 0) {
+      <div class="payment-review">
+        <h4>Payment details awaiting verification</h4>
+        @for (payment of pendingPayments(order); track payment.id) {
+        <div class="payment-row">
+          <p>
+            {{ payment.paid_at | date: 'short' }} · {{ payment.amount_cents / 100 | currency: 'PHP' : 'symbol' : '1.2-2'
+            : 'en-PH' }} · {{ payment.method }} · {{ payment.reference_number || 'No reference supplied' }} @if
+            (payment.notes) { · {{ payment.notes }} }
+          </p>
+          <div class="actions">
+            @if (payment.proof_available) {
+            <button type="button" class="secondary-button" (click)="viewPaymentProof(order.id, payment.id)">
+              View proof
+            </button>
+            }
+            <button type="button" (click)="decidePayment(order, payment, true)">Verify</button>
+            <button type="button" class="danger-button" (click)="decidePayment(order, payment, false)">Reject</button>
+          </div>
+        </div>
+        @if (paymentProofPreviews[payment.id]) {
+        <img class="payment-proof-preview" [src]="paymentProofPreviews[payment.id]" alt="Uploaded payment proof" />
+        } }
+      </div>
+      }
+
+      <div class="order-actions">
+        @if (order.status === 'pending_admin') {
+        <button type="button" (click)="updateOrder(order, 'confirmed')">Confirm & hold inventory</button>
+        <button type="button" class="danger-button" (click)="updateOrder(order, 'rejected')">
+          Reject & release inventory
+        </button>
+        } @if (order.status === 'confirmed') {
+        <button type="button" (click)="updateOrder(order, 'completed')">Mark completed / returned</button>
+        } @if (order.status === 'pending_admin' || order.status === 'confirmed') {
+        <button type="button" class="secondary-button" (click)="manualPaymentOrderId = order.id">
+          Record offline payment / refund
+        </button>
+        }
+      </div>
+
+      @if (manualPaymentOrderId === order.id) {
+      <div class="manual-payment">
+        <h4>Record manually received payment</h4>
+        <div class="form-grid">
+          <label>
+            Entry type
+            <select [(ngModel)]="manualPaymentKind" [name]="'payment-kind-' + order.id">
+              <option value="payment">Payment</option>
+              <option value="refund">Refund recorded</option>
+            </select>
+          </label>
+          <label
+            >Amount (₱)
+            <input
+              type="number"
+              min="0.01"
+              step="0.01"
+              [(ngModel)]="manualPaymentAmount"
+              [name]="'payment-amount-' + order.id"
+          /></label>
+          <label>
+            Method
+            <select [(ngModel)]="manualPaymentMethod" [name]="'payment-method-' + order.id">
+              <option value="cash">Cash</option>
+              <option value="gcash">GCash</option>
+              <option value="bank_transfer">Bank Transfer</option>
+            </select>
+          </label>
+          <label
+            >Payment date
+            <input type="datetime-local" [(ngModel)]="manualPaymentDate" [name]="'payment-date-' + order.id"
+          /></label>
+          <label
+            >Reference number <input [(ngModel)]="manualPaymentReference" [name]="'payment-reference-' + order.id"
+          /></label>
+          <label>Notes <input [(ngModel)]="manualPaymentNotes" [name]="'payment-notes-' + order.id" /></label>
+        </div>
+        <div class="actions">
+          <button type="button" (click)="recordManualPayment()" [disabled]="saving">Save verified entry</button>
+          <button type="button" class="text-button" (click)="manualPaymentOrderId = null">Close</button>
+        </div>
+        <p>Recording a refund logs an offline event only. No gateway or automatic refund is initiated.</p>
+      </div>
+      }
+    </article>
+    }
+  </section>
+  } @case ('products') {
+  <section class="admin-section">
+    <div class="panel quick-product">
+      <div class="section-heading">
+        <div>
+          <p class="eyebrow">QUICK ADD</p>
+          <h2>{{ productId ? 'Edit product' : 'Add product' }}</h2>
+        </div>
+        @if (productId) { <button type="button" class="text-button" (click)="newProduct()">New product</button> }
+      </div>
+      <div class="form-grid product-quick-fields">
+        <label>
+          Product name <span aria-hidden="true">*</span>
+          <input
+            [(ngModel)]="productName"
+            name="productName"
+            #productNameInput
+            maxlength="160"
+            placeholder="e.g. Portable Karaoke Set"
+            required
+          />
+        </label>
+        <label>
+          Equipment category <span aria-hidden="true">*</span>
+          <select [(ngModel)]="productCategory" name="productCategory" required>
+            <option value="" disabled>Select a category</option>
+            @for (category of categories; track category.id) { @if (category.is_active || category.name ===
+            productCategory) {
+            <option [value]="category.name">{{ category.name }}{{ category.is_active ? '' : ' (inactive)' }}</option>
+            } }
+          </select>
+        </label>
+        <label>
+          Quality classification <span aria-hidden="true">*</span>
+          <select [(ngModel)]="productQualityId" name="productQuality" required>
+            <option value="" disabled>Select a quality label</option>
+            @for (tier of tiers; track tier.id) {
+            <option [value]="tier.id">{{ tier.name }}{{ tier.is_active === false ? ' (inactive)' : '' }}</option>
+            }
+          </select>
+        </label>
+        <label
+          >Rental price (₱) <span aria-hidden="true">*</span>
+          <input
+            type="number"
+            min="0"
+            step="0.01"
+            [(ngModel)]="productPrice"
+            name="productPrice"
+            placeholder="e.g. 1500"
+            required
+          />
+        </label>
+        @if (!productId) {
+        <label>
+          Initial stock quantity <span aria-hidden="true">*</span>
+          <input
+            type="number"
+            min="0"
+            max="1000"
+            step="1"
+            [(ngModel)]="productInitialStock"
+            name="productInitialStock"
+            placeholder="e.g. 5"
+            required
+          />
+        </label>
+        } @else {
+        <p class="hint stock-edit-hint">Adjust current stock inline in the catalog list below.</p>
+        }
+        <label class="wide"
+          >Product image (optional, JPEG/PNG/WebP, 5 MB max)
+          <input
+            #productImageInput
+            type="file"
+            accept="image/jpeg,image/png,image/webp"
+            name="productImage"
+            (change)="onProductImageSelected($event)"
+          />
+        </label>
+        @if (productImageFile) {
+        <p class="hint wide">Selected: {{ productImageFile.name }}</p>
+        } @if (productImagePreviewUrl || productImageUrl) {
+        <img
+          class="product-image-preview wide"
+          [src]="productImagePreviewUrl || productImageUrl"
+          [alt]="productName || 'Product image preview'"
+        />
+        }
+        <details class="wide advanced-settings" [open]="productId !== null">
+          <summary>Advanced settings</summary>
+          <div class="form-grid">
+            <label class="wide"
+              >Description
+              <textarea
+                [(ngModel)]="productDescription"
+                name="productDescription"
+                maxlength="4000"
+                placeholder="Add product details for customers"
+              ></textarea>
+            </label>
+            <label>
+              Billing basis
+              <select [(ngModel)]="productPricingBasis" name="productPricingBasis">
+                <option value="unconfigured">Not configured (checkout blocked)</option>
+                <option value="per_rental">Per rental</option>
+                <option value="duration">Duration-based</option>
+              </select>
+            </label>
+            @if (productPricingBasis === 'duration') {
+            <label
+              >Rental duration unit (minutes)
+              <input type="number" min="1" [(ngModel)]="productInterval" name="productInterval" placeholder="e.g. 60" />
+            </label>
+            <label>
+              Duration rounding rule
+              <select [(ngModel)]="productRounding" name="productRounding">
+                <option value="ceil">Round up to full interval</option>
+                <option value="pro_rata">Pro rata</option>
+              </select>
+            </label>
+            }
+            <label class="checkbox"
+              ><input type="checkbox" [(ngModel)]="productActive" name="productActive" /> Active in customer
+              catalog</label
+            >
+          </div>
+        </details>
+      </div>
+      <button type="button" (click)="saveProduct()" [disabled]="saving">
+        {{ productId ? 'Save product' : 'Create product' }}
+      </button>
+    </div>
+    <div class="panel full-width">
+      <div class="section-heading">
+        <div>
+          <p class="eyebrow">PRODUCTS</p>
+          <h2>Catalog products</h2>
+        </div>
+      </div>
+      <div class="product-list-filters">
+        <input
+          [(ngModel)]="productSearch"
+          name="productSearch"
+          type="search"
+          placeholder="Search products, categories, or quality"
+          aria-label="Search products"
+        />
+        <select [(ngModel)]="productStatusFilter" name="productStatusFilter" aria-label="Filter product status">
+          <option value="all">All products</option>
+          <option value="active">Active</option>
+          <option value="inactive">Inactive</option>
+        </select>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Product</th>
+              <th>Quality</th>
+              <th>Stock quantity</th>
+              <th>Rental price</th>
+              <th>Billing basis</th>
+              <th>State</th>
+              <th>Actions</th>
+            </tr>
+          </thead>
+          <tbody>
+            @for (product of filteredProducts; track product.id) {
+            <tr>
+              <td>{{ product.name }} <small>{{ categoryLabel(product.category) }}</small></td>
+              <td>{{ product.quality_name }}</td>
+              <td>
+                <div class="inline-editor">
+                  <input
+                    type="number"
+                    min="0"
+                    max="1000"
+                    step="1"
+                    [(ngModel)]="productStockDrafts[product.id]"
+                    [name]="'productStock-' + product.id"
+                    [attr.aria-label]="'Stock quantity for ' + product.name"
+                  />
+                  <button type="button" class="secondary-button" (click)="saveInlineStock(product)" [disabled]="saving">
+                    Save
+                  </button>
+                </div>
+              </td>
+              <td>
+                <div class="inline-editor">
+                  <input
+                    type="number"
+                    min="0"
+                    step="0.01"
+                    [(ngModel)]="productPriceDrafts[product.id]"
+                    [name]="'productPrice-' + product.id"
+                    [attr.aria-label]="'Rental price for ' + product.name"
+                  />
+                  <button type="button" class="secondary-button" (click)="saveInlinePrice(product)" [disabled]="saving">
+                    Save
+                  </button>
+                </div>
+              </td>
+              <td>{{ product.pricing_configured ? product.pricing_basis : 'Not configured' }}</td>
+              <td>{{ product.is_active ? 'Active' : 'Inactive' }}</td>
+              <td>
+                <div class="product-row-actions">
+                  <button type="button" class="text-button" (click)="editProduct(product)">Edit</button>
+                  <button type="button" class="text-button" (click)="duplicateProduct(product)">Duplicate</button>
+                </div>
+              </td>
+            </tr>
+            }
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </section>
+  } @case ('classifications') {
+  <section class="admin-section">
+    <div class="panel">
+      <div class="section-heading">
+        <div>
+          <p class="eyebrow">PRODUCT SETTINGS</p>
+          <h2>Quality classifications</h2>
+        </div>
+      </div>
+      <div class="quality-list">
+        @for (tier of tiers; track tier.id) {
+        <div>
+          <span>{{ tier.name }}{{ tier.is_active === false ? ' · inactive' : '' }}</span
+          ><button type="button" class="text-button" (click)="editTier(tier)">Edit</button>
+        </div>
+        }
+      </div>
+      <div class="form-grid single">
+        <label>Classification name <input [(ngModel)]="qualityName" name="qualityName" maxlength="80" /></label>
+        <label class="checkbox"
+          ><input type="checkbox" [(ngModel)]="qualityActive" name="qualityActive" /> Active classification</label
+        >
+      </div>
+      <div class="actions">
+        <button type="button" (click)="saveTier()" [disabled]="saving">
+          {{ qualityId ? 'Save classification' : 'Add classification' }}
+        </button>
+        @if (qualityId) {
+        <button type="button" class="text-button" (click)="qualityId = null; qualityName = ''">Cancel</button> }
+      </div>
+    </div>
+    <div class="panel spaced-panel">
+      <div class="section-heading">
+        <div>
+          <p class="eyebrow">BUSINESS CATEGORIES</p>
+          <h2>Equipment categories</h2>
+        </div>
+      </div>
+      <div class="quality-list">
+        @for (category of categories; track category.id) {
+        <div>
+          <span>{{ category.name }}{{ category.is_active ? '' : ' · inactive' }}</span>
+          <button type="button" class="text-button" (click)="editCategory(category)">Edit</button>
+        </div>
+        }
+      </div>
+      <div class="form-grid single">
+        <label>Category name <input [(ngModel)]="categoryName" name="categoryName" maxlength="80" required /></label>
+        <label class="checkbox"
+          ><input type="checkbox" [(ngModel)]="categoryActive" name="categoryActive" /> Active category</label
+        >
+      </div>
+      <div class="actions">
+        <button type="button" (click)="saveCategory()" [disabled]="saving">
+          {{ categoryId ? 'Save category' : 'Add category' }}
+        </button>
+        @if (categoryId) {
+        <button type="button" class="text-button" (click)="categoryId = null; categoryName = ''; categoryActive = true">
+          Cancel
+        </button>
+        }
+      </div>
+    </div>
+  </section>
+  } @case ('packages') {
+  <section class="admin-section two-column">
+    <div class="panel">
+      <div class="section-heading">
+        <div>
+          <p class="eyebrow">BUNDLES</p>
+          <h2>{{ packageId ? 'Edit package' : 'Create package' }}</h2>
+        </div>
+        @if (packageId) { <button type="button" class="text-button" (click)="newPackage()">New package</button> }
+      </div>
+      <div class="form-grid">
+        <label>Name <input [(ngModel)]="packageName" name="packageName" maxlength="160" /></label>
+        <label
+          >Package price (₱) <input type="number" min="0" step="0.01" [(ngModel)]="packagePrice" name="packagePrice"
+        /></label>
+        <label>
+          Package billing basis
+          <select [(ngModel)]="packagePricingBasis" name="packagePricingBasis">
+            <option value="unconfigured">Not configured (checkout blocked)</option>
+            <option value="per_rental">Per rental (admin selected)</option>
+            <option value="duration">Duration unit (admin selected)</option>
+          </select>
+        </label>
+        @if (packagePricingBasis === 'duration') {
+        <label
+          >Billing interval (minutes) <input type="number" min="1" [(ngModel)]="packageInterval" name="packageInterval"
+        /></label>
+        <label>
+          Interval rounding
+          <select [(ngModel)]="packageRounding" name="packageRounding">
+            <option value="ceil">Round up to full interval</option>
+            <option value="pro_rata">Pro rata</option>
+          </select>
+        </label>
+        }
+        <label class="wide"
+          >Upload image (optional, JPEG/PNG/WebP, 5 MB max)
+          <input
+            #packageImageInput
+            type="file"
+            accept="image/jpeg,image/png,image/webp"
+            name="packageImage"
+            (change)="onPackageImageSelected($event)"
+          />
+        </label>
+        @if (packageImageFile) {
+        <p class="hint wide">Selected: {{ packageImageFile.name }}</p>
+        } @if (packageImagePreviewUrl || packageImageUrl) {
+        <img
+          class="package-image-preview wide"
+          [src]="packageImagePreviewUrl || packageImageUrl"
+          [alt]="packageName || 'Package image preview'"
+        />
+        }
+        <label class="wide"
+          >Description <textarea [(ngModel)]="packageDescription" name="packageDescription" maxlength="4000"></textarea>
+        </label>
+        <label class="checkbox"
+          ><input type="checkbox" [(ngModel)]="packageActive" name="packageActive" /> Active in customer catalog</label
+        >
+      </div>
+      <h3>Included stock</h3>
+      <div class="add-component">
+        <select [(ngModel)]="selectedComponentId" name="componentProduct" aria-label="Package product">
+          <option value="">Select a product</option>
+          @for (product of products; track product.id) {
+          <option [value]="product.id">{{ product.name }} · {{ product.quality_name }}</option>
+          }
+        </select>
+        <button type="button" class="secondary-button" (click)="addPackageComponent()">Add item</button>
+      </div>
+      @for (component of packageComponents; track component.product_id; let index = $index) {
+      <div class="component-row">
+        <span>{{ productLabel(component.product_id) }}</span>
+        <label
+          >Quantity
+          <input type="number" min="1" max="1000" [(ngModel)]="component.quantity" [name]="'component-' + index"
+        /></label>
+        <button class="text-button danger" type="button" (click)="removePackageComponent(index)">Remove</button>
+      </div>
+      }
+      <p class="hint">
+        A package price covers the package as a whole; included items reserve inventory and are not charged a second
+        time.
+      </p>
+      <button type="button" (click)="savePackage()" [disabled]="saving">
+        {{ packageId ? 'Save package' : 'Create package' }}
+      </button>
+    </div>
+    <div class="panel">
+      <p class="eyebrow">ACTIVE AND INACTIVE</p>
+      <h2>Saved packages</h2>
+      @for (rentalPackage of packages; track rentalPackage.id) {
+      <article class="small-card">
+        @if (rentalPackage.image_url) {
+        <img class="saved-package-image" [src]="rentalPackage.image_url" [alt]="rentalPackage.name" loading="lazy" />
+        }
+        <div>
+          <h3>{{ rentalPackage.name }}</h3>
+          <p>
+            {{ rentalPackage.components.length }} stock components · {{ rentalPackage.pricing_configured ? 'Pricing
+            configured' : 'Pricing unconfigured' }}
+          </p>
+        </div>
+        <button class="text-button" type="button" (click)="editPackage(rentalPackage)">Edit</button>
+      </article>
+      }
+    </div>
+  </section>
+  } @case ('inventory') {
+  <section class="admin-section">
+    <div class="panel">
+      <p class="eyebrow">PHYSICAL ASSETS</p>
+      <h2>Add inventory unit</h2>
+      <div class="form-grid">
+        <label>
+          Catalog product
+          <select [(ngModel)]="assetProductId" name="assetProduct">
+            <option value="">Select a product</option>
+            @for (product of products; track product.id) {
+            <option [value]="product.id">{{ product.name }} · {{ product.quality_name }}</option>
+            }
+          </select>
+        </label>
+        <label>Asset tag <input [(ngModel)]="assetTag" name="assetTag" maxlength="100" /></label>
+        <label>
+          Physical condition
+          <select [(ngModel)]="assetCondition" name="assetCondition">
+            <option value="available">Available</option>
+            <option value="under_maintenance">Under maintenance</option>
+            <option value="damaged">Damaged</option>
+            <option value="unavailable">Unavailable</option>
+          </select>
+        </label>
+      </div>
+      <button type="button" (click)="addAsset()" [disabled]="saving">Add asset</button>
+    </div>
+    <div class="panel spaced-panel">
+      <p class="eyebrow">STOCK REGISTER</p>
+      <h2>Individual equipment</h2>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Tag</th>
+              <th>Product</th>
+              <th>Rental state</th>
+              <th>Physical condition</th>
+              <th>Update condition</th>
+            </tr>
+          </thead>
+          <tbody>
+            @for (asset of assets; track asset.id) {
+            <tr>
+              <td>{{ asset.asset_tag }}</td>
+              <td>{{ asset.product_name }}</td>
+              <td>{{ asset.rental_status || 'Available' }}</td>
+              <td>{{ asset.condition.replace('_', ' ') }}</td>
+              <td>
+                <select
+                  [ngModel]="asset.condition"
+                  [name]="'condition-' + asset.id"
+                  (ngModelChange)="updateCondition(asset, $event)"
+                >
+                  <option value="available">Available</option>
+                  <option value="under_maintenance">Under maintenance</option>
+                  <option value="damaged">Damaged</option>
+                  <option value="unavailable">Unavailable</option>
+                </select>
+              </td>
+            </tr>
+            }
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </section>
+  } @case ('customers') {
+  <section class="admin-section panel">
+    <p class="eyebrow">CUSTOMER ACCOUNTS</p>
+    <h2>Registered customers</h2>
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>Customer</th>
+            <th>Email</th>
+            <th>Phone</th>
+            <th>Joined</th>
+            <th>Account</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody>
+          @for (customer of customers; track customer.id) {
+          <tr>
+            <td>{{ customer.display_name }}</td>
+            <td>{{ customer.email }}</td>
+            <td>{{ customer.phone || '—' }}</td>
+            <td>{{ customer.created_at | date: 'mediumDate' }}</td>
+            <td>{{ customer.is_active ? 'Active' : 'Disabled' }}</td>
+            <td>
+              <button type="button" class="text-button" (click)="setCustomerActive(customer, !customer.is_active)">
+                {{ customer.is_active ? 'Disable' : 'Enable' }}
+              </button>
+            </td>
+          </tr>
+          }
+        </tbody>
+      </table>
+    </div>
+  </section>
+  } @case ('reports') {
+  <section class="admin-section">
+    <p class="eyebrow">OPERATING SUMMARY</p>
+    <h2>Rental and collection snapshot</h2>
+    @if (report) {
+    <div class="report-grid">
+      <article><span>Rental orders</span><strong>{{ report.orders }}</strong></article>
+      <article>
+        <span>Assets in available condition</span><strong>{{ report.assets_in_available_condition }}</strong>
+      </article>
+      <article>
+        <span>Verified offline collections</span
+        ><strong>{{ report.verified_collections_cents / 100 | currency: 'PHP' : 'symbol' : '1.2-2' : 'en-PH' }}</strong>
+      </article>
+    </div>
+    <p class="hint">{{ report.collections_note }}</p>
+    }
+  </section>
+  } @case ('settings') {
+  <section class="admin-section two-column">
+    <div class="panel">
+      <p class="eyebrow">STOREFRONT IDENTITY</p>
+      <h2>Business profile and branding</h2>
+      <div class="form-grid">
+        <label class="wide"
+          >Business name
+          <input [(ngModel)]="businessProfileDraft.name" name="businessName" maxlength="160" required />
+        </label>
+        <label class="wide"
+          >Description
+          <textarea
+            [(ngModel)]="businessProfileDraft.description"
+            name="businessDescription"
+            maxlength="4000"
+            rows="4"
+          ></textarea>
+        </label>
+        <label
+          >Email <input [(ngModel)]="businessProfileDraft.contact_email" name="businessEmail" type="email"
+        /></label>
+        <label>Contact number <input [(ngModel)]="businessProfileDraft.contact_phone" name="businessPhone" /></label>
+        <label class="wide">Address <input [(ngModel)]="businessProfileDraft.address" name="businessAddress" /></label>
+        <label
+          >Primary color <input type="color" [(ngModel)]="businessProfileDraft.brand_primary" name="brandPrimary"
+        /></label>
+        <label
+          >Secondary color <input type="color" [(ngModel)]="businessProfileDraft.brand_secondary" name="brandSecondary"
+        /></label>
+        <label
+          >Accent color <input type="color" [(ngModel)]="businessProfileDraft.brand_accent" name="brandAccent"
+        /></label>
+      </div>
+      <button type="button" (click)="saveBusinessSettings()" [disabled]="saving">Save storefront profile</button>
+    </div>
+    <div class="panel">
+      <p class="eyebrow">STOREFRONT MEDIA</p>
+      <h2>Logo and banner</h2>
+      <label class="upload-field"
+        >Business logo (JPEG/PNG/WebP, 5 MB max)
+        <input type="file" accept="image/jpeg,image/png,image/webp" (change)="selectBusinessImage($event, 'logo')" />
+      </label>
+      @if (businessLogoPreviewUrl || business?.logo_url) {
+      <img
+        class="business-image-preview"
+        [src]="businessLogoPreviewUrl || business?.logo_url"
+        alt="Business logo preview"
+      />
+      }
+      <button type="button" (click)="uploadBusinessImage('logo')" [disabled]="saving || !businessLogoFile">
+        Upload logo
+      </button>
+      <label class="upload-field"
+        >Storefront banner (JPEG/PNG/WebP, 5 MB max)
+        <input type="file" accept="image/jpeg,image/png,image/webp" (change)="selectBusinessImage($event, 'banner')" />
+      </label>
+      @if (businessBannerPreviewUrl || business?.banner_url) {
+      <img
+        class="business-image-preview banner-preview"
+        [src]="businessBannerPreviewUrl || business?.banner_url"
+        alt="Storefront banner preview"
+      />
+      }
+      <button type="button" (click)="uploadBusinessImage('banner')" [disabled]="saving || !businessBannerFile">
+        Upload banner
+      </button>
+    </div>
+  </section>
+  } @case ('staff') {
+  <section class="admin-section two-column">
+    <div class="panel">
+      <p class="eyebrow">TEAM ACCESS</p>
+      <h2>Add business staff</h2>
+      <p class="hint">Staff accounts are limited to this business and its operations.</p>
+      <form class="form-grid" (ngSubmit)="createStaff()">
+        <label>Name <input [(ngModel)]="staffName" name="staffName" maxlength="120" required /></label>
+        <label>Email <input [(ngModel)]="staffEmail" name="staffEmail" type="email" maxlength="320" required /></label>
+        <label>Phone (optional) <input [(ngModel)]="staffPhone" name="staffPhone" maxlength="40" /></label>
+        <label
+          >Password (12+ characters)
+          <input
+            [(ngModel)]="staffPassword"
+            name="staffPassword"
+            type="password"
+            minlength="12"
+            maxlength="128"
+            required
+          />
+        </label>
+        <button class="wide" type="submit" [disabled]="saving">Create staff account</button>
+      </form>
+    </div>
+    <div class="panel">
+      <p class="eyebrow">BUSINESS USERS</p>
+      <h2>Staff accounts</h2>
+      @for (member of staff; track member.id) {
+      <article class="staff-row">
+        <div>
+          <strong>{{ member.display_name }}</strong>
+          <span>{{ member.email }} · {{ member.role.replace('business_', '') }}</span>
+        </div>
+        @if (member.role === 'business_staff') {
+        <button
+          type="button"
+          class="text-button"
+          (click)="setStaffActive(member, !member.is_active)"
+          [disabled]="saving"
+        >
+          {{ member.is_active ? 'Disable' : 'Enable' }}
+        </button>
+        } @else {
+        <span>{{ member.is_active ? 'Active' : 'Disabled' }}</span>
+        }
+      </article>
+      } @empty {
+      <p class="empty-state">No staff accounts have been created.</p>
+      }
+    </div>
+  </section>
+  } }
+</main>
