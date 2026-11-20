@@ -53,6 +53,9 @@ use a paid API plan and move the migration command back to `preDeployCommand`
 so migrations run before deployment rather than at every service start. Review
 Render's current pricing before upgrading.
 
+The static-site build pins Node.js 22.22.3, which meets the Angular CLI's
+minimum supported Node.js version.
+
 ## 4. Verify the deployment
 
 After both services deploy:
