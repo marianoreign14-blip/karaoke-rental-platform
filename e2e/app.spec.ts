@@ -5,20 +5,43 @@ test('visits the app root url', async ({ page }) => {
   await expect(page.getByRole('heading', { name: 'Find a karaoke rental business' })).toBeVisible();
   await expect(page.getByRole('heading', { name: 'Make room for a good gathering.' })).toBeVisible();
   await expect(page.getByRole('heading', { name: 'Browse rental equipment' })).toBeVisible();
+  const pageBackground = await page.locator('body').evaluate((element) => {
+    const styles = getComputedStyle(element);
+    return { color: styles.backgroundColor, image: styles.backgroundImage };
+  });
+  expect(pageBackground).toEqual({ color: 'rgb(255, 255, 255)', image: 'none' });
 
   const menu = page.locator('.responsive-menu-toggle');
   const marketplaceLink = page.getByRole('navigation', { name: 'Main navigation' }).getByRole('link', {
     name: 'Marketplace',
   });
+  const expectContentGutters = async () => {
+    const gutters = await page.evaluate(() => {
+      const main = document.querySelector('main')!.getBoundingClientRect();
+      const hero = document.querySelector('.hero-surface')!.getBoundingClientRect();
+      const availability = document.querySelector('.rental-window')!.getBoundingClientRect();
+      return [
+        hero.left - main.left,
+        main.right - hero.right,
+        availability.left - main.left,
+        main.right - availability.right,
+      ];
+    });
+    for (const gutter of gutters) {
+      expect(gutter).toBeGreaterThanOrEqual(10);
+    }
+  };
   for (const width of [1440, 1280]) {
     await page.setViewportSize({ width, height: 900 });
     await expect(menu).toBeHidden();
     await expect(marketplaceLink).toBeVisible();
+    await expectContentGutters();
   }
   for (const width of [768, 412, 375]) {
     await page.setViewportSize({ width, height: 900 });
     await expect(menu).toBeVisible();
     await expect(marketplaceLink).toBeHidden();
+    await expectContentGutters();
     expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(width);
   }
   await expect(menu).toBeVisible();
@@ -31,6 +54,24 @@ test('opens account page and rejects unauthenticated admin access', async ({ pag
   await page.setViewportSize({ width: 1024, height: 768 });
   await page.goto('/account');
   await expect(page.getByRole('heading', { name: 'Sign in to your account' })).toBeVisible();
+  await expect(page.locator('body')).toHaveCSS('background-color', 'rgb(255, 255, 255)');
+  for (const width of [1024, 412, 375]) {
+    await page.setViewportSize({ width, height: 768 });
+    const alignment = await page.evaluate(() => {
+      const main = document.querySelector('main.auth-layout');
+      const panel = document.querySelector('.auth-panel');
+      if (!main || !panel) {
+        return null;
+      }
+      const mainRect = main.getBoundingClientRect();
+      const panelRect = panel.getBoundingClientRect();
+      return Math.abs(mainRect.top + mainRect.height / 2 - (panelRect.top + panelRect.height / 2));
+    });
+    expect(alignment).not.toBeNull();
+    expect(alignment).toBeLessThan(2);
+    expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(width);
+  }
+  await page.setViewportSize({ width: 1024, height: 768 });
   await expect(page.getByRole('link', { name: 'KARAOKE home' })).toBeVisible();
   await expect(page.getByRole('link', { name: 'Browse rentals' })).toBeVisible();
   await expect(page.locator('.account-topbar')).toHaveCSS('display', 'flex');

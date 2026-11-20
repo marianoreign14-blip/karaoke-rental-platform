@@ -14,7 +14,7 @@
 </ion-header>
 
 <ion-content>
-  <main>
+  <main [class.auth-layout]="!user">
     @if (error) {
     <div class="message error" role="alert">
       <span>{{ error }}</span>
