@@ -58,6 +58,73 @@ test('visits the app root url', async ({ page }) => {
   await expect(marketplaceLink).toBeVisible();
 });
 
+test('animates the shared audio logo without shifting its wordmark', async ({ page }) => {
+  await page.emulateMedia({ reducedMotion: 'no-preference' });
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await page.goto('/');
+
+  const mark = page.locator('app-brand-mark .mark').first();
+  const waves = mark.locator('.wave');
+  const wordmark = page.locator('app-brand-mark .brand-text').first();
+  await expect(mark).toBeVisible();
+  await expect(waves).toHaveCount(5);
+
+  const waveStyles = await waves.evaluateAll((elements) =>
+    elements.map((element) => {
+      const styles = getComputedStyle(element);
+      return { animationName: styles.animationName, animationDuration: styles.animationDuration };
+    }),
+  );
+  expect(waveStyles.every(({ animationName }) => animationName.includes('brand-wave'))).toBe(true);
+  expect(new Set(waveStyles.map(({ animationDuration }) => animationDuration)).size).toBeGreaterThan(1);
+  expect(await mark.evaluate((element) => getComputedStyle(element, '::before').animationName)).toContain(
+    'brand-mark-glow',
+  );
+
+  const wordmarkBeforeHover = await wordmark.boundingBox();
+  const navigation = page.getByRole('navigation', { name: 'Main navigation' });
+  const navigationBeforeHover = await navigation.boundingBox();
+  const transformsBefore = await waves.evaluateAll((elements) =>
+    elements.map((element) => getComputedStyle(element).transform),
+  );
+  await page.waitForTimeout(150);
+  const transformsAfter = await waves.evaluateAll((elements) =>
+    elements.map((element) => getComputedStyle(element).transform),
+  );
+  expect(transformsAfter.some((transform, index) => transform !== transformsBefore[index])).toBe(true);
+
+  const normalFilter = await mark.evaluate((element) => getComputedStyle(element).filter);
+  await mark.hover();
+  expect(await mark.evaluate((element) => getComputedStyle(element).transform)).not.toBe('none');
+  expect(await mark.evaluate((element) => getComputedStyle(element).filter)).not.toBe(normalFilter);
+  const wordmarkAfterHover = await wordmark.boundingBox();
+  const navigationAfterHover = await navigation.boundingBox();
+  expect(wordmarkBeforeHover).not.toBeNull();
+  expect(wordmarkAfterHover).not.toBeNull();
+  expect(navigationBeforeHover).not.toBeNull();
+  expect(navigationAfterHover).not.toBeNull();
+  expect(Math.abs(wordmarkAfterHover!.x - wordmarkBeforeHover!.x)).toBeLessThan(1);
+  expect(Math.abs(navigationAfterHover!.x - navigationBeforeHover!.x)).toBeLessThan(1);
+
+  await page.mouse.move(0, 0);
+  for (const width of [1440, 768, 375]) {
+    await page.setViewportSize({ width, height: 900 });
+    await expect(mark).toBeVisible();
+    expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(width);
+  }
+
+  await page.emulateMedia({ reducedMotion: 'reduce' });
+  const reducedMotionStyles = await page.evaluate(() => ({
+    waveAnimation: getComputedStyle(document.querySelector('app-brand-mark .wave')!).animationName,
+    glowAnimation: getComputedStyle(document.querySelector('app-brand-mark .mark')!, '::before').animationName,
+  }));
+  expect(reducedMotionStyles).toEqual({ waveAnimation: 'none', glowAnimation: 'none' });
+
+  await page.goto('/account');
+  await page.getByRole('link', { name: 'KARAOKE home' }).click();
+  await expect(page).toHaveURL(/\/home$/);
+});
+
 test('opens account page and rejects unauthenticated admin access', async ({ page }) => {
   await page.setViewportSize({ width: 1024, height: 768 });
   await page.goto('/account');
