@@ -21,7 +21,11 @@ class Settings(BaseSettings):
     database_url: str
     secret_key: str
     access_token_minutes: int = 60
-    cors_origins: Annotated[list[str], NoDecode] = ["http://localhost:4200", "http://localhost:8100"]
+    cors_origins: Annotated[list[str], NoDecode] = [
+        "http://localhost:4200",
+        "http://localhost:8100",
+        "https://localhost",
+    ]
     app_base_url: str = "http://localhost:4200"
     smtp_host: str | None = None
     smtp_port: int = 587

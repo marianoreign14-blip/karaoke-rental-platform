@@ -97,10 +97,11 @@ npm run test:e2e
 
 The Angular production web build uses `/api`; deploy the API behind the same
 origin or change `src/environments/environment.prod.ts` to the HTTPS API URL.
-`build:android` currently points the Android emulator at `10.0.2.2:8000`.
-Before any Android release, replace that development URL in
-`src/environments/environment.android.ts` with the deployed HTTPS API origin.
-Never ship the emulator address in a release.
+The Android build uses the deployed HTTPS API origin in
+`src/environments/environment.android.ts`; do not use `10.0.2.2` in an APK,
+because it only reaches the host machine from the Android emulator. The API's
+`CORS_ORIGINS` must include `https://localhost`, Capacitor's Android WebView
+origin, as well as the website origin.
 
 ## Android
 
@@ -119,9 +120,9 @@ npx cap open android
 
 For later frontend changes, rebuild and run `npx cap sync android` to copy the
 shared web assets and update native plugins. A release APK/AAB is produced
-through Android Studio/Gradle after configuring the production API URL, signing,
-and release metadata. Android device builds have not been verified in this
-environment.
+through Android Studio/Gradle after configuring signing and release metadata.
+Install and verify the APK on a physical Android device after each release
+build.
 
 ## Operations and security
 

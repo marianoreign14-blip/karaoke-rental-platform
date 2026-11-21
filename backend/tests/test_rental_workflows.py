@@ -760,6 +760,19 @@ def test_cors_does_not_allow_ambient_credentials(client):
     assert "access-control-allow-credentials" not in response.headers
 
 
+def test_cors_allows_capacitor_android_origin(client):
+    response = client.options(
+        "/api/auth/business-register",
+        headers={
+            "Origin": "https://localhost",
+            "Access-Control-Request-Method": "POST",
+            "Access-Control-Request-Headers": "content-type",
+        },
+    )
+    assert response.status_code == 200
+    assert response.headers.get("access-control-allow-origin") == "https://localhost"
+
+
 def test_liveness_endpoint(client):
     response = client.get("/api/live")
     assert response.status_code == 200

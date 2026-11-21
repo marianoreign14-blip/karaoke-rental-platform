@@ -18,7 +18,7 @@ services:
       - key: SECRET_KEY
         sync: false
       - key: CORS_ORIGINS
-        value: '["https://karaoke-marketplace.onrender.com"]'
+        value: '["https://karaoke-marketplace.onrender.com", "https://localhost"]'
       - key: APP_BASE_URL
         value: https://karaoke-marketplace.onrender.com
 

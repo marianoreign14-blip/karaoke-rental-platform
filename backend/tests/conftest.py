@@ -11,6 +11,7 @@ from sqlalchemy.pool import StaticPool
 test_database_url = os.environ.get("TEST_DATABASE_URL", "sqlite://")
 os.environ["DATABASE_URL"] = test_database_url
 os.environ["SECRET_KEY"] = "test-secret-key-only-not-for-use-in-deployment-32-characters"
+os.environ["CORS_ORIGINS"] = "http://localhost:4200,https://localhost"
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from app.api.routes import limiter

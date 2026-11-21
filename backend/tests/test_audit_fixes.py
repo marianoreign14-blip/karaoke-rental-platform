@@ -87,9 +87,9 @@ def test_cors_origins_parses_both_comma_and_json_and_rejects_wildcard():
     json_settings = Settings(
         database_url="sqlite://",
         secret_key=secret,
-        cors_origins='["https://karaoke-marketplace.onrender.com"]',
+        cors_origins='["https://karaoke-marketplace.onrender.com", "https://localhost"]',
     )
-    assert json_settings.cors_origins == ["https://karaoke-marketplace.onrender.com"]
+    assert json_settings.cors_origins == ["https://karaoke-marketplace.onrender.com", "https://localhost"]
 
     try:
         Settings(database_url="sqlite://", secret_key=secret, cors_origins="*")

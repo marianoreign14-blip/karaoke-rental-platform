@@ -1,4 +1,4 @@
 export const environment = {
   production: true,
-  apiUrl: 'http://10.0.2.2:8000/api',
+  apiUrl: 'https://karaoke-marketplace-api.onrender.com/api',
 };
