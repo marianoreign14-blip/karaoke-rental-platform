@@ -105,7 +105,7 @@ export class OrderDetailPage implements OnInit, OnDestroy {
   }
 
   canRequest(order: RentalOrder): boolean {
-    return order.status === 'pending_admin' || order.status === 'confirmed';
+    return order.status === 'pending_admin' || order.status === 'under_review' || order.status === 'confirmed';
   }
 
   hasPendingRequest(order: RentalOrder): boolean {

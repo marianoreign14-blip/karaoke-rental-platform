@@ -17,7 +17,12 @@ from app.models import (
 )
 from app.schemas import OrderLineInput
 
-ACTIVE_ALLOCATION_STATUSES = (RentalStatus.PENDING_ADMIN, RentalStatus.CONFIRMED)
+ACTIVE_ALLOCATION_STATUSES = (
+    RentalStatus.PENDING_ADMIN,
+    RentalStatus.UNDER_REVIEW,
+    RentalStatus.CONFIRMED,
+    RentalStatus.ONGOING,
+)
 
 
 def price_configured(item: Product | RentalPackage) -> bool:

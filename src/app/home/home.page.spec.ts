@@ -5,15 +5,17 @@ import { provideRouter } from '@angular/router';
 import { of } from 'rxjs';
 
 import { ApiService } from '../core/api.service';
-import type { Product } from '../core/api.service';
+import type { Product, User } from '../core/api.service';
 
 import { HomePage } from './home.page';
 
 describe('HomePage', () => {
   let component: HomePage;
   let fixture: ComponentFixture<HomePage>;
+  let userState: ReturnType<typeof signal<User | null>>;
 
   beforeEach(async () => {
+    userState = signal<User | null>(null);
     await TestBed.configureTestingModule({
       imports: [HomePage],
       providers: [
@@ -21,7 +23,7 @@ describe('HomePage', () => {
         {
           provide: ApiService,
           useValue: {
-            user: signal(null),
+            user: userState,
             marketplaceBusinesses: () => of([]),
             marketplaceBusiness: () => of(null),
             qualityTiers: () => of([]),
@@ -43,7 +45,7 @@ describe('HomePage', () => {
     expect(component).toBeTruthy();
   });
 
-  it('keeps a rental request limited to one business', () => {
+  it('allows a rental request to include items from multiple businesses', () => {
     const makeProduct = (id: number, businessId: number): Product => ({
       id,
       business_id: businessId,
@@ -69,9 +71,48 @@ describe('HomePage', () => {
     component.addProduct(makeProduct(1, 10));
     component.addProduct(makeProduct(2, 20));
 
-    expect(component.cart).toHaveLength(1);
+    expect(component.cart).toHaveLength(2);
     expect(component.cart[0].business_id).toBe(10);
-    expect(component.error).toContain('one business rental request at a time');
+    expect(component.cart[1].business_id).toBe(20);
+    expect(component.error).toBe('');
+  });
+
+  it('explains that an estimate is required when a customer submits without one', async () => {
+    userState.set({
+      id: 1,
+      email: 'customer@example.com',
+      display_name: 'Customer',
+      phone: null,
+      role: 'customer',
+      business_id: null,
+    });
+    component.startsInput = '2030-01-01T10:00';
+    component.endsInput = '2030-01-01T11:00';
+    component.addProduct({
+      id: 1,
+      business_id: 10,
+      business_name: 'EchoVibe',
+      business_slug: 'echovibe',
+      name: 'Karaoke equipment',
+      description: '',
+      specifications: {},
+      category: 'Karaoke Machines',
+      quality_tier_id: 1,
+      quality_name: 'Standard',
+      price_cents: 100000,
+      pricing_basis: 'per_rental',
+      pricing_configured: true,
+      billing_interval_minutes: null,
+      rounding_rule: null,
+      image_url: null,
+      is_active: true,
+      stock_count: 1,
+      available_count: 1,
+    });
+
+    await component.submitOrder();
+
+    expect(component.error).toBe('Calculate an estimate before submitting your rental request.');
   });
 
   it('renders PHP currency totals with registered en-PH locale without throwing NG0701', () => {

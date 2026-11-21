@@ -56,6 +56,8 @@ describe('PlatformPage', () => {
               ]),
             platformProducts: () => of([]),
             platformOrders: () => of([]),
+            platformOrderSummary: () => of({ total: 0, orders_by_status: {}, total_value_cents: 0 }),
+            platformOrderDetail: () => of(null),
             platformPayments: () => of([]),
             platformReports: () =>
               of({

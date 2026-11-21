@@ -11,6 +11,8 @@ import type {
   Business,
   NotificationItem,
   PlatformAuditLog,
+  PlatformOrderDetail,
+  PlatformOrderSummary,
   PlatformPaymentRecord,
   PlatformReportSummary,
   PlatformSummary,
@@ -145,6 +147,8 @@ export class PlatformPage implements OnInit, OnDestroy {
   users: PlatformUser[] = [];
   products: Product[] = [];
   orders: RentalOrder[] = [];
+  orderSummary: PlatformOrderSummary | null = null;
+  selectedOrder: PlatformOrderDetail | null = null;
   payments: PlatformPaymentRecord[] = [];
   report: PlatformReportSummary | null = null;
   activity: PlatformAuditLog[] = [];
@@ -162,6 +166,12 @@ export class PlatformPage implements OnInit, OnDestroy {
   productActiveFilter = '';
   orderBusinessFilter = '';
   orderStatusFilter = '';
+  orderCustomerFilter = '';
+  orderReferenceFilter = '';
+  orderCreatedFrom = '';
+  orderCreatedTo = '';
+  orderPaymentStatusFilter = '';
+  orderPaymentMethodFilter: '' | 'cash' | 'gcash' | 'bank_transfer' = '';
   paymentBusinessFilter = '';
   paymentStatusFilter = '';
   paymentMethodFilter = '';
@@ -311,44 +321,50 @@ export class PlatformPage implements OnInit, OnDestroy {
     this.error = '';
     try {
       const reportRange = this.reportDateRange();
-      const [summary, businesses, settings, activity, users, products, orders, payments, report, notificationFeed] =
-        await Promise.all([
-          firstValueFrom(this.api.platformSummary()),
-          firstValueFrom(this.api.platformBusinesses()),
-          firstValueFrom(this.api.platformSettings()),
-          firstValueFrom(this.api.platformAuditLogs(100)),
-          firstValueFrom(
-            this.api.platformUsers({
-              role: this.userRoleFilter || undefined,
-              search: this.userSearch || undefined,
-              is_active: this.parseOptionalBool(this.userActiveFilter),
-            }),
-          ),
-          firstValueFrom(
-            this.api.platformProducts({
-              business_id: this.productBusinessFilter ? Number(this.productBusinessFilter) : undefined,
-              search: this.productSearch || undefined,
-              is_active: this.parseOptionalBool(this.productActiveFilter),
-            }),
-          ),
-          firstValueFrom(
-            this.api.platformOrders({
-              business_id: this.orderBusinessFilter ? Number(this.orderBusinessFilter) : undefined,
-              status: this.orderStatusFilter || undefined,
-              limit: 100,
-            }),
-          ),
-          firstValueFrom(
-            this.api.platformPayments({
-              business_id: this.paymentBusinessFilter ? Number(this.paymentBusinessFilter) : undefined,
-              status: this.paymentStatusFilter || undefined,
-              method: this.paymentMethodFilter || undefined,
-              limit: 100,
-            }),
-          ),
-          firstValueFrom(this.api.platformReports(reportRange?.starts_at, reportRange?.ends_at)),
-          firstValueFrom(this.api.notifications(false, 50)),
-        ]);
+      const [
+        summary,
+        businesses,
+        settings,
+        activity,
+        users,
+        products,
+        orders,
+        orderSummary,
+        payments,
+        report,
+        notificationFeed,
+      ] = await Promise.all([
+        firstValueFrom(this.api.platformSummary()),
+        firstValueFrom(this.api.platformBusinesses()),
+        firstValueFrom(this.api.platformSettings()),
+        firstValueFrom(this.api.platformAuditLogs(100)),
+        firstValueFrom(
+          this.api.platformUsers({
+            role: this.userRoleFilter || undefined,
+            search: this.userSearch || undefined,
+            is_active: this.parseOptionalBool(this.userActiveFilter),
+          }),
+        ),
+        firstValueFrom(
+          this.api.platformProducts({
+            business_id: this.productBusinessFilter ? Number(this.productBusinessFilter) : undefined,
+            search: this.productSearch || undefined,
+            is_active: this.parseOptionalBool(this.productActiveFilter),
+          }),
+        ),
+        firstValueFrom(this.api.platformOrders({ ...this.orderFilters(), limit: 500 })),
+        firstValueFrom(this.api.platformOrderSummary(this.orderFilters())),
+        firstValueFrom(
+          this.api.platformPayments({
+            business_id: this.paymentBusinessFilter ? Number(this.paymentBusinessFilter) : undefined,
+            status: this.paymentStatusFilter || undefined,
+            method: this.paymentMethodFilter || undefined,
+            limit: 100,
+          }),
+        ),
+        firstValueFrom(this.api.platformReports(reportRange?.starts_at, reportRange?.ends_at)),
+        firstValueFrom(this.api.notifications(false, 50)),
+      ]);
       if (generation !== this.loadGeneration || !this.api.hasValidSession()) {
         return;
       }
@@ -365,6 +381,10 @@ export class PlatformPage implements OnInit, OnDestroy {
       this.users = users;
       this.products = products;
       this.orders = orders;
+      this.orderSummary = orderSummary;
+      if (this.selectedOrder && !orders.some((order) => order.id === this.selectedOrder?.id)) {
+        this.selectedOrder = null;
+      }
       this.payments = payments;
       this.report = report;
       this.notifications = notificationFeed.items;
@@ -482,14 +502,9 @@ export class PlatformPage implements OnInit, OnDestroy {
     this.loading = true;
     this.error = '';
     try {
-      const [orders, payments] = await Promise.all([
-        firstValueFrom(
-          this.api.platformOrders({
-            business_id: this.orderBusinessFilter ? Number(this.orderBusinessFilter) : undefined,
-            status: this.orderStatusFilter || undefined,
-            limit: 100,
-          }),
-        ),
+      const [orders, orderSummary, payments] = await Promise.all([
+        firstValueFrom(this.api.platformOrders({ ...this.orderFilters(), limit: 500 })),
+        firstValueFrom(this.api.platformOrderSummary(this.orderFilters())),
         firstValueFrom(
           this.api.platformPayments({
             business_id: this.paymentBusinessFilter ? Number(this.paymentBusinessFilter) : undefined,
@@ -500,6 +515,7 @@ export class PlatformPage implements OnInit, OnDestroy {
         ),
       ]);
       this.orders = orders;
+      this.orderSummary = orderSummary;
       this.payments = payments;
     } catch (error) {
       this.error = this.errorMessage(error);
@@ -507,6 +523,38 @@ export class PlatformPage implements OnInit, OnDestroy {
       this.loading = false;
       this.changeDetector.markForCheck();
     }
+  }
+
+  async inspectOrder(order: RentalOrder): Promise<void> {
+    this.loading = true;
+    this.error = '';
+    try {
+      this.selectedOrder = await firstValueFrom(this.api.platformOrderDetail(order.id));
+    } catch (error) {
+      this.error = this.errorMessage(error);
+    } finally {
+      this.loading = false;
+      this.changeDetector.markForCheck();
+    }
+  }
+
+  showCustomerInDirectory(order: RentalOrder): void {
+    this.userSearch = order.customer_name;
+    this.selectSection('users');
+    void this.loadUsers();
+  }
+
+  private orderFilters() {
+    return {
+      business_id: this.orderBusinessFilter ? Number(this.orderBusinessFilter) : undefined,
+      status: this.orderStatusFilter || undefined,
+      customer_search: this.orderCustomerFilter.trim() || undefined,
+      reference_search: this.orderReferenceFilter.trim() || undefined,
+      created_from: this.orderCreatedFrom ? new Date(this.orderCreatedFrom).toISOString() : undefined,
+      created_to: this.orderCreatedTo ? new Date(this.orderCreatedTo).toISOString() : undefined,
+      payment_status: this.orderPaymentStatusFilter || undefined,
+      payment_method: this.orderPaymentMethodFilter || undefined,
+    };
   }
 
   async loadReport(): Promise<void> {

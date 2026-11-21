@@ -583,7 +583,62 @@
             </div>
             <span class="count-pill">{{ orders.length }} orders</span>
           </div>
+          @if (orderSummary) {
+          <div class="kpi-strip">
+            <article class="kpi-card"><span>Matching requests</span><strong>{{ orderSummary.total }}</strong></article>
+            <article class="kpi-card">
+              <span>Matching order value</span>
+              <strong class="tabular-nums">
+                {{ orderSummary.total_value_cents / 100 | currency: 'PHP' : 'symbol' : '1.2-2' : 'en-PH' }}
+              </strong>
+            </article>
+            <article class="kpi-card">
+              <span>Pending review</span>
+              <strong>{{ orderSummary.orders_by_status['pending_admin'] ?? 0 }}</strong>
+            </article>
+            <article class="kpi-card">
+              <span>Under review</span>
+              <strong>{{ orderSummary.orders_by_status['under_review'] ?? 0 }}</strong>
+            </article>
+          </div>
+          <div class="status-breakdown">
+            <app-status-badge
+              value="confirmed"
+              [label]="'Accepted / confirmed: ' + (orderSummary.orders_by_status['confirmed'] ?? 0)"
+            ></app-status-badge>
+            <app-status-badge
+              value="ongoing"
+              [label]="'Ongoing: ' + (orderSummary.orders_by_status['ongoing'] ?? 0)"
+            ></app-status-badge>
+            <app-status-badge
+              value="completed"
+              [label]="'Completed: ' + (orderSummary.orders_by_status['completed'] ?? 0)"
+            ></app-status-badge>
+            <app-status-badge
+              value="cancelled"
+              [label]="'Cancelled: ' + (orderSummary.orders_by_status['cancelled'] ?? 0)"
+            ></app-status-badge>
+            <app-status-badge
+              value="rejected"
+              [label]="'Rejected: ' + (orderSummary.orders_by_status['rejected'] ?? 0)"
+            ></app-status-badge>
+          </div>
+          }
           <div class="filter-bar">
+            <input
+              type="search"
+              [(ngModel)]="orderReferenceFilter"
+              name="orderReferenceFilter"
+              placeholder="Request reference"
+              aria-label="Search request reference"
+            />
+            <input
+              type="search"
+              [(ngModel)]="orderCustomerFilter"
+              name="orderCustomerFilter"
+              placeholder="Customer name or email"
+              aria-label="Filter by customer"
+            />
             <select [(ngModel)]="orderBusinessFilter" name="orderBusinessFilter" aria-label="Filter orders by business">
               <option value="">All businesses</option>
               @for (business of businesses; track business.id) {
@@ -593,11 +648,42 @@
             <select [(ngModel)]="orderStatusFilter" name="orderStatusFilter" aria-label="Filter orders by status">
               <option value="">All statuses</option>
               <option value="pending_admin">Pending admin</option>
+              <option value="under_review">Under review</option>
               <option value="confirmed">Confirmed</option>
+              <option value="ongoing">Ongoing</option>
               <option value="completed">Completed</option>
               <option value="cancelled">Cancelled</option>
               <option value="rejected">Rejected</option>
             </select>
+            <select
+              [(ngModel)]="orderPaymentStatusFilter"
+              name="orderPaymentStatusFilter"
+              aria-label="Filter orders by payment status"
+            >
+              <option value="">All payment statuses</option>
+              <option value="unpaid">Unpaid</option>
+              <option value="partially_paid">Partially paid</option>
+              <option value="paid">Paid</option>
+              <option value="refunded">Refunded</option>
+            </select>
+            <select
+              [(ngModel)]="orderPaymentMethodFilter"
+              name="orderPaymentMethodFilter"
+              aria-label="Filter orders by preferred payment method"
+            >
+              <option value="">All preferred methods</option>
+              <option value="cash">Cash</option>
+              <option value="gcash">GCash</option>
+              <option value="bank_transfer">Bank transfer</option>
+            </select>
+            <label>
+              From
+              <input type="datetime-local" [(ngModel)]="orderCreatedFrom" name="orderCreatedFrom" />
+            </label>
+            <label>
+              To
+              <input type="datetime-local" [(ngModel)]="orderCreatedTo" name="orderCreatedTo" />
+            </label>
             <button
               type="button"
               class="secondary-button"
@@ -611,7 +697,7 @@
             <table>
               <thead>
                 <tr>
-                  <th>Order</th>
+                  <th>Request reference</th>
                   <th>Business</th>
                   <th>Customer</th>
                   <th>Rental window</th>
@@ -619,23 +705,31 @@
                   <th>Payment</th>
                   <th>Total</th>
                   <th>Paid</th>
+                  <th>Details</th>
                 </tr>
               </thead>
               <tbody>
                 @for (order of pagedOrders; track order.id) {
                 <tr>
-                  <td class="num">#{{ order.id }}</td>
-                  <td>{{ order.business_name }}</td>
-                  <td>{{ order.customer_name }}</td>
+                  <td class="num">{{ order.checkout_reference || ('#' + order.id) }}</td>
+                  <td>
+                    <a [routerLink]="['/business', order.business_slug]">{{ order.business_name }}</a>
+                  </td>
+                  <td>
+                    <button type="button" class="text-button" (click)="showCustomerInDirectory(order)">
+                      {{ order.customer_name }}
+                    </button>
+                  </td>
                   <td>{{ order.starts_at | date: 'short' }} – {{ order.ends_at | date: 'short' }}</td>
                   <td><app-status-badge [value]="order.status"></app-status-badge></td>
                   <td><app-status-badge [value]="order.payment_status"></app-status-badge></td>
                   <td class="num">{{ order.total_cents / 100 | currency: 'PHP' : 'symbol' : '1.2-2' : 'en-PH' }}</td>
                   <td class="num">{{ order.paid_cents / 100 | currency: 'PHP' : 'symbol' : '1.2-2' : 'en-PH' }}</td>
+                  <td><button type="button" class="text-button" (click)="inspectOrder(order)">View request</button></td>
                 </tr>
                 } @empty {
                 <tr>
-                  <td colspan="8" class="empty-cell">No rental orders match the selected filters.</td>
+                  <td colspan="9" class="empty-cell">No rental orders match the selected filters.</td>
                 </tr>
                 }
               </tbody>
@@ -663,6 +757,82 @@
               </button>
             </div>
           </div>
+          } @if (selectedOrder) {
+          <section class="detail-drawer platform-order-detail" aria-label="Rental request details">
+            <div class="section-heading">
+              <div>
+                <p class="eyebrow">
+                  REQUEST DETAIL · {{ selectedOrder.checkout_reference || ('ORDER #' + selectedOrder.id) }}
+                </p>
+                <h3>{{ selectedOrder.business_name }} · {{ selectedOrder.customer_name }}</h3>
+              </div>
+              <button type="button" class="text-button" (click)="selectedOrder = null">Close details</button>
+            </div>
+            <p>
+              Customer: {{ selectedOrder.customer_email }} @if (selectedOrder.customer_phone) { · {{
+              selectedOrder.customer_phone }} }
+              <button type="button" class="text-button" (click)="showCustomerInDirectory(selectedOrder)">
+                Open customer in directory
+              </button>
+            </p>
+            <p>
+              Business:
+              <a [routerLink]="['/business', selectedOrder.business_slug]">{{ selectedOrder.business_name }}</a>
+            </p>
+            <p>
+              {{ selectedOrder.starts_at | date: 'medium' }} – {{ selectedOrder.ends_at | date: 'medium' }} · submitted
+              {{ selectedOrder.created_at | date: 'short' }}
+            </p>
+            @if (selectedOrder.event_details) {
+            <p><strong>Event details:</strong> {{ selectedOrder.event_details }}</p>
+            } @if (selectedOrder.customer_notes) {
+            <p><strong>Customer notes:</strong> {{ selectedOrder.customer_notes }}</p>
+            } @if (selectedOrder.requested_payment_method) {
+            <p>
+              <strong>Preferred payment method:</strong> {{ selectedOrder.requested_payment_method.replace('_', ' ') }}
+            </p>
+            }
+            <h4>Requested equipment and packages</h4>
+            <ul>
+              @for (line of selectedOrder.lines; track line.id) {
+              <li>{{ line.quantity }} × {{ line.name }}</li>
+              }
+            </ul>
+            <h4>Payment records</h4>
+            <ul>
+              @for (payment of selectedOrder.payments; track payment.id) {
+              <li>
+                {{ payment.amount_cents / 100 | currency: 'PHP' : 'symbol' : '1.2-2' : 'en-PH' }} · {{
+                payment.method.replace('_', ' ') }} · {{ payment.status }} @if (payment.proof_available) { · payment
+                proof attached }
+              </li>
+              } @empty {
+              <li>No payment records submitted.</li>
+              }
+            </ul>
+            <h4>Status history</h4>
+            <ul>
+              @for (event of selectedOrder.history; track $index) {
+              <li>
+                {{ event.created_at | date: 'short' }} · {{ event.action.replaceAll('_', ' ') }} · {{ event.details |
+                json }}
+              </li>
+              } @empty {
+              <li>No status history has been recorded.</li>
+              }
+            </ul>
+            <h4>Business audit log</h4>
+            <ul>
+              @for (event of selectedOrder.audit_log; track event.id) {
+              <li>
+                {{ event.created_at | date: 'short' }} · {{ event.action.replaceAll('_', ' ') }} · account #{{
+                event.actor_id }} · {{ event.details | json }}
+              </li>
+              } @empty {
+              <li>No business audit entries have been recorded for this request.</li>
+              }
+            </ul>
+          </section>
           }
         </section>
 

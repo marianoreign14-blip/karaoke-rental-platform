@@ -39,4 +39,16 @@ describe('OrderProgressComponent', () => {
     expect(fixture.nativeElement.textContent).toContain('cancelled');
     expect(fixture.nativeElement.textContent).toContain('released');
   });
+
+  it('keeps ongoing rentals in the accepted stage and explains under-review requests', () => {
+    component.status = 'ongoing';
+    fixture.detectChanges();
+    expect(component.steps[1].done).toBe(true);
+    expect(component.helperMessage).toContain('in progress');
+
+    component.status = 'under_review';
+    fixture.detectChanges();
+    expect(component.steps[1].current).toBe(true);
+    expect(component.helperMessage).toContain('requested more information');
+  });
 });

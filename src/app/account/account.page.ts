@@ -103,7 +103,13 @@ export class AccountPage implements OnInit, OnDestroy {
 
   get filteredOrders(): RentalOrder[] {
     if (this.orderFilter === 'active') {
-      return this.orders.filter((order) => order.status === 'pending_admin' || order.status === 'confirmed');
+      return this.orders.filter(
+        (order) =>
+          order.status === 'pending_admin' ||
+          order.status === 'under_review' ||
+          order.status === 'confirmed' ||
+          order.status === 'ongoing',
+      );
     }
     if (this.orderFilter === 'completed') {
       return this.orders.filter((order) => order.status === 'completed');
@@ -115,7 +121,13 @@ export class AccountPage implements OnInit, OnDestroy {
   }
 
   get activeOrderCount(): number {
-    return this.orders.filter((order) => order.status === 'pending_admin' || order.status === 'confirmed').length;
+    return this.orders.filter(
+      (order) =>
+        order.status === 'pending_admin' ||
+        order.status === 'under_review' ||
+        order.status === 'confirmed' ||
+        order.status === 'ongoing',
+    ).length;
   }
 
   get totalUnpaidBalanceCents(): number {
@@ -683,7 +695,7 @@ export class AccountPage implements OnInit, OnDestroy {
   }
 
   canRequest(order: RentalOrder): boolean {
-    return order.status === 'pending_admin' || order.status === 'confirmed';
+    return order.status === 'pending_admin' || order.status === 'under_review' || order.status === 'confirmed';
   }
 
   private localDateTime(date: Date): string {

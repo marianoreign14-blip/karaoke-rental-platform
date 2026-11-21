@@ -214,10 +214,26 @@
             <button
               type="button"
               class="filter-pill"
+              [class.active]="orderStatusFilter === 'under_review'"
+              (click)="orderStatusFilter = 'under_review'"
+            >
+              Changes requested <span>{{ orderStatusCount('under_review') }}</span>
+            </button>
+            <button
+              type="button"
+              class="filter-pill"
               [class.active]="orderStatusFilter === 'confirmed'"
               (click)="orderStatusFilter = 'confirmed'"
             >
               Confirmed <span>{{ orderStatusCount('confirmed') }}</span>
+            </button>
+            <button
+              type="button"
+              class="filter-pill"
+              [class.active]="orderStatusFilter === 'ongoing'"
+              (click)="orderStatusFilter = 'ongoing'"
+            >
+              Ongoing <span>{{ orderStatusCount('ongoing') }}</span>
             </button>
             <button
               type="button"
@@ -254,8 +270,10 @@
             />
             <select [(ngModel)]="orderStatusFilter" name="orderStatusFilter" aria-label="Filter order status">
               <option value="all">All statuses</option>
-              <option value="pending_admin">Pending admin</option>
+              <option value="pending_admin">Pending</option>
+              <option value="under_review">Under review</option>
               <option value="confirmed">Confirmed</option>
+              <option value="ongoing">Ongoing</option>
               <option value="completed">Completed</option>
               <option value="cancelled">Cancelled</option>
               <option value="rejected">Rejected</option>
@@ -269,8 +287,14 @@
           <article class="order-card">
             <header>
               <div>
-                <span class="order-id-label">#{{ order.id }} · {{ order.customer_name }}</span>
+                <span class="order-id-label">
+                  {{ order.checkout_reference || ('Request #' + order.id) }} · {{ order.customer_name }}
+                </span>
                 <h3>{{ order.starts_at | date: 'medium' }} – {{ order.ends_at | date: 'medium' }}</h3>
+                <small>
+                  Submitted {{ order.created_at | date: 'short' }} @if (order.requested_payment_method) { · Preferred
+                  payment: {{ paymentMethodLabel(order.requested_payment_method) }} }
+                </small>
               </div>
               <div class="badge-group">
                 <app-status-badge [value]="order.status"></app-status-badge>
@@ -288,6 +312,15 @@
                 </p>
                 }
               </div>
+              @if (order.event_details || order.customer_notes) {
+              <div class="order-context">
+                @if (order.event_details) {
+                <p><strong>Event details:</strong> {{ order.event_details }}</p>
+                } @if (order.customer_notes) {
+                <p><strong>Customer notes:</strong> {{ order.customer_notes }}</p>
+                }
+              </div>
+              }
               <div class="financial-summary">
                 <span>
                   Total
@@ -371,13 +404,27 @@
               <button type="button" class="secondary-button" (click)="toggleOrderDetail(order.id)">
                 {{ inspectedOrderId === order.id ? 'Hide details & assets' : 'Inspect details & assets' }}
               </button>
-              @if (order.status === 'pending_admin') {
+              @if (order.status === 'pending_admin' || order.status === 'under_review') {
+              <button type="button" class="secondary-button" (click)="updateOrder(order, 'under_review')">
+                Request customer changes
+              </button>
               <button type="button" (click)="updateOrder(order, 'confirmed')">Confirm & hold inventory</button>
               <button type="button" class="danger-button" (click)="updateOrder(order, 'rejected')">
                 Reject & release inventory
               </button>
+              <button type="button" class="danger-button" (click)="updateOrder(order, 'cancelled')">
+                Cancel request
+              </button>
               } @if (order.status === 'confirmed') {
+              <button type="button" (click)="updateOrder(order, 'ongoing')">Mark as ongoing</button>
+              <button type="button" class="danger-button" (click)="updateOrder(order, 'cancelled')">
+                Cancel rental
+              </button>
+              } @if (order.status === 'ongoing') {
               <button type="button" (click)="updateOrder(order, 'completed')">Mark completed / returned</button>
+              <button type="button" class="danger-button" (click)="updateOrder(order, 'cancelled')">
+                Cancel rental
+              </button>
               } @if (canRecordManualPayment(order)) {
               <button type="button" class="secondary-button" (click)="openManualPayment(order)">
                 Record offline payment / refund

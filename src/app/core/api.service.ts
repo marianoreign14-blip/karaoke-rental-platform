@@ -231,7 +231,12 @@ export interface RentalOrder {
   customer_name: string;
   starts_at: string;
   ends_at: string;
-  status: 'pending_admin' | 'confirmed' | 'rejected' | 'cancelled' | 'completed';
+  status: 'pending_admin' | 'under_review' | 'confirmed' | 'ongoing' | 'rejected' | 'cancelled' | 'completed';
+  created_at?: string;
+  checkout_reference?: string | null;
+  requested_payment_method?: PaymentEntry['method'] | null;
+  event_details?: string | null;
+  customer_notes?: string | null;
   total_cents: number;
   paid_cents: number;
   balance_cents: number;
@@ -247,6 +252,41 @@ export interface OrderDraft {
   starts_at: string;
   ends_at: string;
   lines: OrderLineInput[];
+}
+
+export interface CheckoutDraft {
+  submission_key: string;
+  starts_at: string;
+  ends_at: string;
+  business_orders: { business_id: number; lines: OrderLineInput[] }[];
+  payment_method: PaymentEntry['method'];
+  event_details: string | null;
+  customer_notes: string | null;
+}
+
+export interface PlatformOrderSummary {
+  total: number;
+  orders_by_status: Record<string, number>;
+  total_value_cents: number;
+}
+
+export interface PlatformOrderDetail extends RentalOrder {
+  customer_email: string;
+  customer_phone: string | null;
+  audit_log: PlatformAuditLog[];
+}
+
+export interface PlatformOrderFilters {
+  business_id?: number;
+  status?: string;
+  customer_search?: string;
+  reference_search?: string;
+  created_from?: string;
+  created_to?: string;
+  payment_status?: string;
+  payment_method?: PaymentEntry['method'];
+  limit?: number;
+  offset?: number;
 }
 
 export interface InventoryAsset {
@@ -644,6 +684,24 @@ export class ApiService {
     return this.http.post<{ total_cents: number; is_estimate: boolean }>(`${this.baseUrl}/orders/quote`, draft, {
       headers: this.headers(),
     });
+  }
+
+  quoteCheckout(draft: CheckoutDraft): Observable<{ total_cents: number; is_estimate: boolean }> {
+    return this.http.post<{ total_cents: number; is_estimate: boolean }>(
+      `${this.baseUrl}/orders/checkout/quote`,
+      draft,
+      { headers: this.headers() },
+    );
+  }
+
+  createCheckout(
+    draft: CheckoutDraft,
+  ): Observable<{ checkout_reference: string; created_at: string; orders: RentalOrder[] }> {
+    return this.http.post<{ checkout_reference: string; created_at: string; orders: RentalOrder[] }>(
+      `${this.baseUrl}/orders/checkout`,
+      draft,
+      { headers: this.headers() },
+    );
   }
 
   createOrder(draft: OrderDraft): Observable<RentalOrder> {
@@ -1216,7 +1274,7 @@ export class ApiService {
     );
   }
 
-  platformOrders(filters: { business_id?: number; status?: string; limit?: number } = {}): Observable<RentalOrder[]> {
+  platformOrders(filters: PlatformOrderFilters = {}): Observable<RentalOrder[]> {
     let params = new HttpParams();
     if (filters.business_id !== undefined) {
       params = params.set('business_id', filters.business_id);
@@ -1224,11 +1282,70 @@ export class ApiService {
     if (filters.status) {
       params = params.set('status', filters.status);
     }
+    if (filters.customer_search?.trim()) {
+      params = params.set('customer_search', filters.customer_search.trim());
+    }
+    if (filters.reference_search?.trim()) {
+      params = params.set('reference_search', filters.reference_search.trim());
+    }
+    if (filters.created_from) {
+      params = params.set('created_from', filters.created_from);
+    }
+    if (filters.created_to) {
+      params = params.set('created_to', filters.created_to);
+    }
+    if (filters.payment_status) {
+      params = params.set('payment_status', filters.payment_status);
+    }
+    if (filters.payment_method) {
+      params = params.set('payment_method', filters.payment_method);
+    }
     if (filters.limit !== undefined) {
       params = params.set('limit', filters.limit);
     }
+    if (filters.offset !== undefined) {
+      params = params.set('offset', filters.offset);
+    }
     return this.http.get<RentalOrder[]>(`${this.baseUrl}/platform/orders`, {
       params,
+      headers: this.headers(),
+    });
+  }
+
+  platformOrderSummary(filters: Omit<PlatformOrderFilters, 'limit' | 'offset'> = {}): Observable<PlatformOrderSummary> {
+    let params = new HttpParams();
+    if (filters.business_id !== undefined) {
+      params = params.set('business_id', filters.business_id);
+    }
+    if (filters.status) {
+      params = params.set('status', filters.status);
+    }
+    if (filters.customer_search?.trim()) {
+      params = params.set('customer_search', filters.customer_search.trim());
+    }
+    if (filters.reference_search?.trim()) {
+      params = params.set('reference_search', filters.reference_search.trim());
+    }
+    if (filters.created_from) {
+      params = params.set('created_from', filters.created_from);
+    }
+    if (filters.created_to) {
+      params = params.set('created_to', filters.created_to);
+    }
+    if (filters.payment_status) {
+      params = params.set('payment_status', filters.payment_status);
+    }
+    if (filters.payment_method) {
+      params = params.set('payment_method', filters.payment_method);
+    }
+    return this.http.get<PlatformOrderSummary>(`${this.baseUrl}/platform/orders/summary`, {
+      params,
+      headers: this.headers(),
+    });
+  }
+
+  platformOrderDetail(id: number): Observable<PlatformOrderDetail> {
+    return this.http.get<PlatformOrderDetail>(`${this.baseUrl}/platform/orders/${id}`, {
       headers: this.headers(),
     });
   }

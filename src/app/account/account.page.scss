@@ -4,7 +4,7 @@
 
 ion-header {
   border-bottom: 1px solid var(--border);
-  background: rgba(255, 255, 255, 0.94);
+  background: var(--app-background);
 }
 
 .account-topbar {
@@ -91,10 +91,10 @@ h2 {
   width: min(448px, 100%);
   margin: 24px auto;
   padding: clamp(24px, 4.5vw, 32px);
-  border: 1px solid var(--border);
+  border: 0;
   border-radius: 0;
-  background: var(--bg-surface);
-  box-shadow: var(--shadow-md);
+  background: transparent;
+  box-shadow: none;
 
   > p:not(.eyebrow) {
     margin: 8px 0 0;
@@ -258,11 +258,12 @@ button:not(.secondary-button):not(.text-button):not(.password-toggle) {
 .order-card,
 .panel-card {
   margin: 14px 0;
-  padding: 20px 22px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-xl);
-  background: var(--bg-surface);
-  box-shadow: var(--shadow-xs);
+  padding: 20px 0;
+  border: 0;
+  border-top: 1px solid var(--border);
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
 }
 
 .panel-head {

@@ -9,7 +9,7 @@ test('visits the app root url', async ({ page }) => {
     const styles = getComputedStyle(element);
     return { color: styles.backgroundColor, image: styles.backgroundImage };
   });
-  expect(pageBackground).toEqual({ color: 'rgb(255, 255, 255)', image: 'none' });
+  expect(pageBackground).toEqual({ color: 'rgb(247, 246, 252)', image: 'none' });
 
   const menu = page.locator('.responsive-menu-toggle');
   const marketplaceLink = page.getByRole('navigation', { name: 'Main navigation' }).getByRole('link', {
@@ -37,7 +37,7 @@ test('visits the app root url', async ({ page }) => {
     }
     expect(measurements.mainRadii.every((radius) => radius === '0px')).toBe(true);
     expect(measurements.heroRadius).toBe('0px');
-    expect(Number.parseFloat(measurements.availabilityRadius)).toBeGreaterThan(0);
+    expect(measurements.availabilityRadius).toBe('0px');
   };
   for (const width of [1440, 1280]) {
     await page.setViewportSize({ width, height: 900 });
@@ -129,10 +129,12 @@ test('opens account page and rejects unauthenticated admin access', async ({ pag
   await page.setViewportSize({ width: 1024, height: 768 });
   await page.goto('/account');
   await expect(page.getByRole('heading', { name: 'Sign in to your account' })).toBeVisible();
-  await expect(page.locator('body')).toHaveCSS('background-color', 'rgb(255, 255, 255)');
+  await expect(page.locator('body')).toHaveCSS('background-color', 'rgb(247, 246, 252)');
   await expect(page.locator('main.auth-layout')).toHaveCSS('background-color', 'rgba(0, 0, 0, 0)');
   await expect(page.locator('main.auth-layout')).toHaveCSS('box-shadow', 'none');
   await expect(page.locator('.auth-panel')).toBeVisible();
+  await expect(page.locator('.auth-panel')).toHaveCSS('background-color', 'rgba(0, 0, 0, 0)');
+  await expect(page.locator('.auth-panel')).toHaveCSS('box-shadow', 'none');
   for (const width of [1024, 412, 375]) {
     await page.setViewportSize({ width, height: 768 });
     const alignment = await page.evaluate(() => {
@@ -196,6 +198,8 @@ test('keeps registration and recovery page surfaces square at responsive widths'
       await page.setViewportSize({ width, height: 900 });
       await expect(page.locator('main').last()).toHaveCSS('border-radius', '0px');
       await expect(surface).toHaveCSS('border-radius', '0px');
+      await expect(surface).toHaveCSS('background-color', 'rgba(0, 0, 0, 0)');
+      await expect(surface).toHaveCSS('box-shadow', 'none');
       await expect(surface.locator('input').first()).not.toHaveCSS('border-radius', '0px');
       expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(width);
     }

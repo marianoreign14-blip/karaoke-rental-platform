@@ -6,10 +6,11 @@
   gap: 32px;
   align-items: center;
   padding: clamp(24px, 4vw, 38px);
-  border: 1px solid var(--border);
+  border: 0;
+  border-bottom: 1px solid var(--border);
   border-radius: 0;
-  background: var(--bg-surface);
-  box-shadow: var(--shadow-sm);
+  background: transparent;
+  box-shadow: none;
 
   h1 {
     margin: 10px 0 14px;
@@ -96,11 +97,11 @@
   display: grid;
   gap: 16px;
   padding: clamp(20px, 3vw, 28px);
-  border: 1px solid var(--border);
+  border: 0;
   border-top: 4px solid var(--accent);
   border-radius: 0;
-  background: var(--bg-surface);
-  box-shadow: var(--shadow-sm);
+  background: transparent;
+  box-shadow: none;
 }
 
 .storefront-top,
@@ -199,10 +200,11 @@
   gap: 14px;
   margin-top: 22px;
   padding: clamp(18px, 2.5vw, 24px);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-xl);
-  background: var(--bg-surface);
-  box-shadow: var(--shadow-xs);
+  border: 0;
+  border-bottom: 1px solid var(--border);
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
 
   h2 {
     margin: 2px 0 0;
@@ -590,10 +592,11 @@
   gap: 28px;
   margin-top: 44px;
   padding: clamp(20px, 3vw, 28px);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-xl);
-  background: var(--bg-surface);
-  box-shadow: var(--shadow-sm);
+  border: 0;
+  border-top: 1px solid var(--border);
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
 
   h2 {
     margin: 6px 0 10px;
@@ -655,6 +658,34 @@
     font: inherit;
     font-weight: 600;
     text-align: center;
+  }
+}
+
+.checkout-details {
+  label {
+    display: grid;
+    gap: 6px;
+    color: var(--text-secondary);
+    font-size: 13px;
+    font-weight: 600;
+  }
+
+  textarea,
+  select {
+    width: 100%;
+    min-height: 42px;
+    padding: 9px 11px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    background: var(--bg-surface);
+    color: var(--text-primary);
+    font: inherit;
+    font-weight: 400;
+  }
+
+  textarea {
+    min-height: 84px;
+    resize: vertical;
   }
 }
 

@@ -48,15 +48,15 @@ ion-header::after {
 
 ion-toolbar {
   --border-width: 0;
-  --background: rgba(255, 255, 255, 0.94);
+  --background: var(--app-background);
   --color: var(--text-primary);
 }
 
 main {
-  border: 1px solid rgba(255, 255, 255, 0.72);
+  border: 0;
   border-radius: 0;
-  background: var(--bg-surface);
-  box-shadow: var(--shadow-md);
+  background: transparent;
+  box-shadow: none;
 }
 
 ion-button {
@@ -189,7 +189,7 @@ a {
   min-height: var(--topbar-h);
   padding: 0 clamp(16px, 4vw, 48px);
   border-bottom: 1px solid var(--border);
-  background: rgba(255, 255, 255, 0.94);
+  background: var(--app-background);
   backdrop-filter: blur(12px);
 
   .brand {
@@ -354,10 +354,10 @@ app-responsive-menu {
   flex-direction: column;
   gap: 6px;
   padding: 16px 18px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-lg);
-  background: var(--bg-surface);
-  box-shadow: var(--shadow-xs);
+  border: 0;
+  border-radius: var(--radius-md);
+  background: var(--bg-canvas);
+  box-shadow: none;
 
   .kpi-head {
     display: flex;
@@ -439,13 +439,13 @@ app-responsive-menu {
   padding: 14px 16px;
   border: 1px solid var(--border);
   border-radius: var(--radius-lg);
-  background: var(--bg-surface);
+  background: var(--bg-canvas);
   transition: border-color var(--transition-fast);
 
   &.unread {
     border-color: var(--accent-border);
     border-left: 3px solid var(--accent);
-    background: #fbfcff;
+    background: var(--accent-soft);
   }
 
   strong {
@@ -529,8 +529,8 @@ app-responsive-menu {
   padding: 16px 18px;
   border: 1px solid var(--border);
   border-radius: var(--radius-lg);
-  background: var(--bg-surface);
-  box-shadow: var(--shadow-xs);
+  background: var(--bg-canvas);
+  box-shadow: none;
 
   header {
     display: flex;
@@ -614,7 +614,7 @@ app-responsive-menu {
   overflow-x: auto;
   border: 1px solid var(--border);
   border-radius: var(--radius-lg);
-  background: var(--bg-surface);
+  background: var(--bg-canvas);
 
   table {
     width: 100%;
@@ -715,10 +715,10 @@ app-responsive-menu {
   width: min(1600px, calc(100% - 40px));
   margin: 20px auto;
   overflow: hidden;
-  border: 1px solid rgba(255, 255, 255, 0.76);
+  border: 0;
   border-radius: 0;
-  background: var(--bg-surface);
-  box-shadow: var(--shadow-lg);
+  background: transparent;
+  box-shadow: none;
   transition: grid-template-columns var(--transition-fast);
 
   &.sidebar-collapsed {
@@ -734,7 +734,7 @@ app-responsive-menu {
   height: calc(100vh - 40px);
   max-height: 100%;
   border-right: 1px solid var(--border);
-  background: var(--bg-surface);
+  background: var(--bg-canvas);
   z-index: 30;
   overflow-y: auto;
 }
@@ -928,7 +928,7 @@ app-responsive-menu {
   min-height: 58px;
   padding: 0 16px;
   border-bottom: 1px solid var(--border);
-  background: var(--bg-surface);
+  background: var(--app-background);
   position: sticky;
   top: 0;
   z-index: 25;
@@ -984,7 +984,7 @@ app-responsive-menu {
   overflow: hidden;
   border: 1px solid var(--border);
   border-radius: var(--radius-lg);
-  background: var(--bg-surface);
+  background: var(--bg-canvas);
 }
 
 .skeleton-media,
@@ -1039,11 +1039,12 @@ app-responsive-menu {
 
 /* Shared Surface Panels, Buttons, Form Controls & Empty States */
 .panel {
-  padding: 20px 22px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-xl);
-  background: var(--bg-surface);
-  box-shadow: var(--shadow-xs);
+  padding: 22px 0;
+  border: 0;
+  border-top: 1px solid var(--border);
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
 }
 
 .spaced-panel {
@@ -1072,7 +1073,7 @@ app-responsive-menu {
   padding: 20px 22px;
   border: 1px dashed var(--border-strong);
   border-radius: var(--radius-lg);
-  background: var(--bg-surface);
+  background: var(--bg-canvas);
   color: var(--text-secondary);
   font-size: 13.5px;
 

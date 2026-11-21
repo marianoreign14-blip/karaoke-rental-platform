@@ -31,11 +31,12 @@ main {
 
 .panel {
   margin-bottom: 18px;
-  padding: clamp(20px, 3vw, 26px);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-xl);
-  background: var(--bg-surface);
-  box-shadow: var(--shadow-xs);
+  padding: clamp(20px, 3vw, 26px) 0;
+  border: 0;
+  border-top: 1px solid var(--border);
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
 
   h1 {
     margin: 6px 0;

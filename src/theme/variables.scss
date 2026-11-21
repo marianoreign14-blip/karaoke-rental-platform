@@ -3,14 +3,14 @@
 
 :root {
   /* Core Palette */
-  --bg-canvas: #e8e7f5;
-  --app-background: #ffffff;
+  --bg-canvas: #f0eef8;
+  --app-background: #f7f6fc;
   --bg-surface: #ffffff;
-  --bg-subtle: #f5f5fa;
-  --bg-hover: #f0eefb;
+  --bg-subtle: #f7f6fc;
+  --bg-hover: #eeeafe;
 
-  --text-primary: #17172b;
-  --text-secondary: #77778b;
+  --text-primary: #19172d;
+  --text-secondary: #77758d;
   --text-muted: #9292a5;
 
   --accent: #6546f5;
@@ -19,8 +19,8 @@
   --accent-soft: #eeeafe;
   --accent-border: #d3cbff;
 
-  --border: #e6e5ef;
-  --border-strong: #d6d5e2;
+  --border: #e8e5f2;
+  --border-strong: #d8d3e8;
 
   /* Semantic Status Colors */
   --success: #22a06b;
@@ -87,12 +87,12 @@
   --ion-color-danger: #dc525b;
   --ion-color-medium: #77778b;
 
-  --ion-background-color: #ffffff;
-  --ion-background-color-rgb: 255, 255, 255;
-  --ion-text-color: #17172b;
-  --ion-text-color-rgb: 23, 23, 43;
+  --ion-background-color: #f7f6fc;
+  --ion-background-color-rgb: 247, 246, 252;
+  --ion-text-color: #19172d;
+  --ion-text-color-rgb: 25, 23, 45;
   --ion-card-background: #ffffff;
   --ion-item-background: #ffffff;
-  --ion-toolbar-background: #ffffff;
+  --ion-toolbar-background: #f7f6fc;
   --ion-border-color: #e6e5ef;
 }

@@ -34,7 +34,7 @@
     <section class="panel">
       <header class="order-head">
         <div>
-          <p class="eyebrow">ORDER #{{ order.id }} · RECEIPT & STATUS</p>
+          <p class="eyebrow">REQUEST {{ order.checkout_reference || ('#' + order.id) }} · RECEIPT & STATUS</p>
           <h1>{{ order.business_name }}</h1>
           <p class="period">
             <app-icon name="calendar" [size]="14"></app-icon>
@@ -51,6 +51,17 @@
       </header>
 
       <app-order-progress [status]="order.status" [paymentStatus]="order.payment_status"></app-order-progress>
+      @if (order.requested_payment_method || order.event_details || order.customer_notes) {
+      <div class="section">
+        @if (order.requested_payment_method) {
+        <p><strong>Preferred payment method:</strong> {{ order.requested_payment_method.replaceAll('_', ' ') }}</p>
+        } @if (order.event_details) {
+        <p><strong>Event details:</strong> {{ order.event_details }}</p>
+        } @if (order.customer_notes) {
+        <p><strong>Your notes:</strong> {{ order.customer_notes }}</p>
+        }
+      </div>
+      }
 
       <div class="section">
         <h2>Rented items</h2>
@@ -100,19 +111,19 @@
         </div>
       </div>
 
-      @if (canRequest(order)) {
+      @if (canRequest(order) || (order.status === 'ongoing' && order.balance_cents > 0)) {
       <div class="actions no-print">
         @if (order.balance_cents > 0) {
         <button type="button" (click)="showPaymentForm = !showPaymentForm">
           <app-icon name="credit-card" [size]="15"></app-icon>
           {{ showPaymentForm ? 'Hide payment form' : 'Submit payment details' }}
         </button>
-        } @if (!hasPendingRequest(order)) {
+        } @if (canRequest(order) && !hasPendingRequest(order)) {
         <a class="secondary-btn" routerLink="/account">Request modification</a>
         <button type="button" class="danger-btn" (click)="requestCancellation()" [disabled]="saving">
           Request cancellation
         </button>
-        } @else {
+        } @else if (canRequest(order)) {
         <span class="hint">A change or cancellation request is currently pending business review.</span>
         }
       </div>
@@ -246,7 +257,9 @@
           <span class="timeline-dot" aria-hidden="true"></span>
           <div class="timeline-body">
             <strong>{{ event.action.replaceAll('_', ' ') }}</strong>
-            <small>{{ event.created_at | date: 'short' }} · account #{{ event.actor_id }}</small>
+            <small>
+              {{ event.created_at | date: 'short' }} · account #{{ event.actor_id }} · {{ event.details | json }}
+            </small>
           </div>
         </div>
         } @empty {

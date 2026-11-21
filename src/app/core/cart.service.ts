@@ -16,6 +16,16 @@ type StoredCartState = {
   items: CartEntry[];
   startsInput: string;
   endsInput: string;
+  submissionKey?: string;
+  eventDetails?: string;
+  customerNotes?: string;
+  paymentMethod?: 'cash' | 'gcash' | 'bank_transfer';
+};
+
+export type CheckoutDetails = {
+  eventDetails: string;
+  customerNotes: string;
+  paymentMethod: 'cash' | 'gcash' | 'bank_transfer';
 };
 
 @Injectable({ providedIn: 'root' })
@@ -24,24 +34,27 @@ export class CartService {
   private readonly itemsState = signal<CartEntry[]>([]);
   private readonly startsState = signal<string>('');
   private readonly endsState = signal<string>('');
+  private readonly submissionKeyState = signal<string>('');
+  private readonly checkoutDetailsState = signal<CheckoutDetails>({
+    eventDetails: '',
+    customerNotes: '',
+    paymentMethod: 'cash',
+  });
 
   readonly items = this.itemsState.asReadonly();
   readonly startsInput = this.startsState.asReadonly();
   readonly endsInput = this.endsState.asReadonly();
+  readonly submissionKey = this.submissionKeyState.asReadonly();
+  readonly checkoutDetails = this.checkoutDetailsState.asReadonly();
   readonly count = computed(() => this.itemsState().reduce((total, item) => total + item.quantity, 0));
 
   constructor() {
+    this.submissionKeyState.set(this.newSubmissionKey());
     this.restore();
   }
 
   addItem(item: CartEntry): { ok: true } | { ok: false; error: string } {
     const current = this.itemsState();
-    if (current.some((entry) => entry.business_id !== item.business_id)) {
-      return {
-        ok: false,
-        error: 'Submit one business rental request at a time. Clear your selection before choosing another business.',
-      };
-    }
     const qty = Math.min(1000, Math.max(1, Math.floor(item.quantity || 1)));
     const existing = current.find((entry) => entry.key === item.key);
     const updated = existing
@@ -50,7 +63,7 @@ export class CartService {
         )
       : [...current, { ...item, quantity: qty }];
     this.itemsState.set(updated);
-    this.persist();
+    this.rotateSubmissionKey();
     return { ok: true };
   }
 
@@ -61,18 +74,38 @@ export class CartService {
       quantity === 0
         ? current.filter((entry) => entry.key !== key)
         : current.map((entry) => (entry.key === key ? { ...entry, quantity } : entry));
+    if (JSON.stringify(updated) === JSON.stringify(current)) {
+      return;
+    }
     this.itemsState.set(updated);
-    this.persist();
+    this.rotateSubmissionKey();
   }
 
   setWindow(startsInput: string, endsInput: string): void {
+    if (this.startsState() === startsInput && this.endsState() === endsInput) {
+      return;
+    }
     this.startsState.set(startsInput);
     this.endsState.set(endsInput);
-    this.persist();
+    this.rotateSubmissionKey();
   }
 
   clear(): void {
     this.itemsState.set([]);
+    this.checkoutDetailsState.set({ eventDetails: '', customerNotes: '', paymentMethod: 'cash' });
+    this.rotateSubmissionKey();
+  }
+
+  setCheckoutDetails(details: CheckoutDetails): void {
+    if (JSON.stringify(this.checkoutDetailsState()) === JSON.stringify(details)) {
+      return;
+    }
+    this.checkoutDetailsState.set(details);
+    this.rotateSubmissionKey();
+  }
+
+  rotateSubmissionKey(): void {
+    this.submissionKeyState.set(this.newSubmissionKey());
     this.persist();
   }
 
@@ -82,6 +115,10 @@ export class CartService {
         items: this.itemsState(),
         startsInput: this.startsState(),
         endsInput: this.endsState(),
+        submissionKey: this.submissionKeyState(),
+        eventDetails: this.checkoutDetailsState().eventDetails,
+        customerNotes: this.checkoutDetailsState().customerNotes,
+        paymentMethod: this.checkoutDetailsState().paymentMethod,
       };
       sessionStorage.setItem(this.storageKey, JSON.stringify(payload));
     } catch {
@@ -96,6 +133,11 @@ export class CartService {
         return;
       }
       const parsed = JSON.parse(raw) as Partial<StoredCartState>;
+      this.submissionKeyState.set(
+        typeof parsed.submissionKey === 'string' && parsed.submissionKey.length >= 8
+          ? parsed.submissionKey
+          : this.newSubmissionKey(),
+      );
       if (Array.isArray(parsed.items)) {
         const validItems = parsed.items.filter(
           (entry): entry is CartEntry =>
@@ -121,8 +163,22 @@ export class CartService {
       if (typeof parsed.endsInput === 'string') {
         this.endsState.set(parsed.endsInput);
       }
+      this.checkoutDetailsState.set({
+        eventDetails: typeof parsed.eventDetails === 'string' ? parsed.eventDetails : '',
+        customerNotes: typeof parsed.customerNotes === 'string' ? parsed.customerNotes : '',
+        paymentMethod:
+          parsed.paymentMethod === 'gcash' || parsed.paymentMethod === 'bank_transfer' ? parsed.paymentMethod : 'cash',
+      });
     } catch {
       sessionStorage.removeItem(this.storageKey);
+      this.submissionKeyState.set(this.newSubmissionKey());
     }
+  }
+
+  private newSubmissionKey(): string {
+    if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+      return crypto.randomUUID();
+    }
+    return `${Date.now()}-${Math.random().toString(36).slice(2)}-${Math.random().toString(36).slice(2)}`;
   }
 }

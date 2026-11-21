@@ -17,7 +17,7 @@ import {
 import { firstValueFrom } from 'rxjs';
 
 import { ApiService, extractApiError } from '../core/api.service';
-import type { Business, OrderDraft, Product, RentalPackage } from '../core/api.service';
+import type { Business, CheckoutDraft, PaymentEntry, Product, RentalPackage } from '../core/api.service';
 import { CartService } from '../core/cart.service';
 import type { CartEntry } from '../core/cart.service';
 import { BrandMarkComponent } from '../shared/brand-mark.component';
@@ -81,6 +81,9 @@ export class HomePage implements OnInit {
   readonly catalogPageSize = 12;
   startsInput = this.cartService.startsInput();
   endsInput = this.cartService.endsInput();
+  eventDetails = this.cartService.checkoutDetails().eventDetails;
+  customerNotes = this.cartService.checkoutDetails().customerNotes;
+  paymentMethod: PaymentEntry['method'] = this.cartService.checkoutDetails().paymentMethod;
   quoteTotal: number | null = null;
   unreadNotifications = 0;
   loading = false;
@@ -88,7 +91,7 @@ export class HomePage implements OnInit {
   submitting = false;
   error = '';
   notice = '';
-  private lastDraft: OrderDraft | null = null;
+  private lastDraft: CheckoutDraft | null = null;
   private knownCategories = new Set<string>();
   private knownPackageCategories = new Set<string>();
   private pendingScrollToRequest = false;
@@ -102,15 +105,15 @@ export class HomePage implements OnInit {
   }
 
   get cartBusinessName(): string {
-    const first = this.cart[0];
-    if (!first) {
-      return '';
-    }
-    return (
-      first.business_name ||
-      this.businesses.find((business) => business.id === first.business_id)?.name ||
-      `Business #${first.business_id}`
-    );
+    const businessIds = [...new Set(this.cart.map((entry) => entry.business_id))];
+    return businessIds
+      .map((id) => {
+        const entry = this.cart.find((item) => item.business_id === id);
+        return (
+          entry?.business_name || this.businesses.find((business) => business.id === id)?.name || `Business #${id}`
+        );
+      })
+      .join(', ');
   }
 
   get pagedProducts(): Product[] {
@@ -322,6 +325,9 @@ export class HomePage implements OnInit {
       }
     }
     this.cartService.clear();
+    this.eventDetails = '';
+    this.customerNotes = '';
+    this.paymentMethod = 'cash';
     this.clearQuote();
     this.error = '';
     this.notice = 'Rental selection cleared.';
@@ -340,7 +346,7 @@ export class HomePage implements OnInit {
     this.notice = '';
     this.quoteTotal = null;
     try {
-      const quote = await firstValueFrom(this.api.quote(draft));
+      const quote = await firstValueFrom(this.api.quoteCheckout(draft));
       this.quoteTotal = quote.total_cents;
       this.lastDraft = draft;
       this.toast.success('Estimate updated. Review the total and submit when ready.');
@@ -355,13 +361,8 @@ export class HomePage implements OnInit {
 
   async submitOrder(): Promise<void> {
     const draft = this.createDraft();
-    if (
-      !draft ||
-      this.quoteTotal === null ||
-      !this.lastDraft ||
-      JSON.stringify(draft) !== JSON.stringify(this.lastDraft)
-    ) {
-      this.error = 'Recalculate the estimate after changing rental dates or items.';
+    if (!draft) {
+      this.error = this.rentalWindowError || 'Choose a rental start and end time and add at least one item.';
       return;
     }
     const signedInUser = this.user();
@@ -373,14 +374,25 @@ export class HomePage implements OnInit {
       this.error = 'Sign in with a customer account to submit a rental request.';
       return;
     }
+    if (this.quoteTotal === null || !this.lastDraft) {
+      this.error = 'Calculate an estimate before submitting your rental request.';
+      return;
+    }
+    if (JSON.stringify(draft) !== JSON.stringify(this.lastDraft)) {
+      this.error = 'Rental dates or items changed. Recalculate the estimate before submitting.';
+      return;
+    }
     this.submitting = true;
     this.error = '';
     try {
-      const order = await firstValueFrom(this.api.createOrder(draft));
+      const checkout = await firstValueFrom(this.api.createCheckout(draft));
       this.cartService.clear();
       this.clearQuote();
-      this.notice = `Rental request #${order.id} for ${order.business_name} was submitted. View it in My account & orders.`;
-      this.toast.success(`Rental request #${order.id} submitted!`);
+      this.eventDetails = '';
+      this.customerNotes = '';
+      this.paymentMethod = 'cash';
+      this.notice = `Rental request ${checkout.checkout_reference} was submitted to ${checkout.orders.length} business(es). View it in My account & orders.`;
+      this.toast.success(`Rental request ${checkout.checkout_reference} submitted!`);
       this.loadCatalog();
       void this.loadUnreadCount();
     } catch (error) {
@@ -402,6 +414,15 @@ export class HomePage implements OnInit {
       return;
     }
     this.loadCatalog();
+  }
+
+  onCheckoutDetailsChanged(): void {
+    this.cartService.setCheckoutDetails({
+      eventDetails: this.eventDetails,
+      customerNotes: this.customerNotes,
+      paymentMethod: this.paymentMethod,
+    });
+    this.clearQuote();
   }
 
   priceLabel(priceCents: number | null, configured: boolean): string {
@@ -482,15 +503,25 @@ export class HomePage implements OnInit {
     this.toast.success(`Added ${item.name} to your rental request.`);
   }
 
-  private createDraft(): OrderDraft | null {
+  private createDraft(): CheckoutDraft | null {
     const rentalWindow = this.rentalWindow();
     if (!rentalWindow || !this.cart.length) {
       return null;
     }
     return {
-      business_id: this.cart[0].business_id,
+      submission_key: this.cartService.submissionKey(),
       ...rentalWindow,
-      lines: this.cart.map(({ kind, item_id, quantity }) => ({ kind, item_id, quantity })),
+      business_orders: [...new Set(this.cart.map((item) => item.business_id))]
+        .sort((left, right) => left - right)
+        .map((business_id) => ({
+          business_id,
+          lines: this.cart
+            .filter((item) => item.business_id === business_id)
+            .map(({ kind, item_id, quantity }) => ({ kind, item_id, quantity })),
+        })),
+      payment_method: this.paymentMethod,
+      event_details: this.eventDetails.trim() || null,
+      customer_notes: this.customerNotes.trim() || null,
     };
   }
 

@@ -57,10 +57,10 @@ main {
   grid-template-columns: minmax(0, 1fr) minmax(0, 1.15fr);
   gap: 32px;
   padding: clamp(20px, 3vw, 28px);
-  border: 1px solid var(--border);
+  border: 0;
   border-radius: 0;
-  background: var(--bg-surface);
-  box-shadow: var(--shadow-sm);
+  background: transparent;
+  box-shadow: none;
 }
 
 .media-box {
@@ -290,10 +290,11 @@ input {
   gap: 16px;
   margin-top: 22px;
   padding: 22px 24px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-xl);
-  background: var(--bg-surface);
-  box-shadow: var(--shadow-xs);
+  border: 0;
+  border-top: 1px solid var(--border);
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
 
   h2,
   h1 {

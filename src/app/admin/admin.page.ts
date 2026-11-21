@@ -1,8 +1,9 @@
 import { CommonModule, CurrencyPipe, DatePipe } from '@angular/common';
-import { ChangeDetectorRef, Component, inject, ViewChild } from '@angular/core';
+import { ChangeDetectorRef, Component, DestroyRef, inject, ViewChild } from '@angular/core';
 import type { ElementRef, OnDestroy, OnInit } from '@angular/core';
+import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { FormsModule } from '@angular/forms';
-import { Router, RouterLink } from '@angular/router';
+import { ActivatedRoute, Router, RouterLink } from '@angular/router';
 import { IonContent } from '@ionic/angular';
 import type { Observable } from 'rxjs';
 import { firstValueFrom } from 'rxjs';
@@ -72,7 +73,9 @@ type PackageDraft = { product_id: number; quantity: number };
 })
 export class AdminPage implements OnInit, OnDestroy {
   private readonly api = inject(ApiService);
+  private readonly route = inject(ActivatedRoute);
   private readonly router = inject(Router);
+  private readonly destroyRef = inject(DestroyRef);
   private readonly changeDetector = inject(ChangeDetectorRef);
   private readonly confirmDialog = inject(ConfirmDialogService);
   private readonly toast = inject(ToastService);
@@ -86,7 +89,7 @@ export class AdminPage implements OnInit, OnDestroy {
   readonly currentUser = this.api.user;
   readonly isBusinessAdmin = this.api.isBusinessAdmin;
   readonly sections: { id: AdminSection; label: string; icon: IconName }[] = [
-    { id: 'orders', label: 'Orders & payments', icon: 'shopping-bag' },
+    { id: 'orders', label: 'Rental requests', icon: 'shopping-bag' },
     { id: 'transactions', label: 'Transactions', icon: 'credit-card' },
     { id: 'calendar', label: 'Booking calendar', icon: 'calendar' },
     { id: 'products', label: 'Products', icon: 'layers' },
@@ -287,7 +290,13 @@ export class AdminPage implements OnInit, OnDestroy {
   }
 
   get activeOrderCount(): number {
-    return this.orders.filter((order) => order.status === 'pending_admin' || order.status === 'confirmed').length;
+    return this.orders.filter(
+      (order) =>
+        order.status === 'pending_admin' ||
+        order.status === 'under_review' ||
+        order.status === 'confirmed' ||
+        order.status === 'ongoing',
+    ).length;
   }
 
   get pendingOrdersCount(): number {
@@ -299,7 +308,12 @@ export class AdminPage implements OnInit, OnDestroy {
   }
 
   get needsAttentionCount(): number {
-    return this.pendingOrdersCount + this.pendingPaymentCount + this.requests.length;
+    return (
+      this.pendingOrdersCount +
+      this.orders.filter((order) => order.status === 'under_review').length +
+      this.pendingPaymentCount +
+      this.requests.length
+    );
   }
 
   orderStatusCount(status: 'all' | RentalOrder['status']): number {
@@ -421,6 +435,18 @@ export class AdminPage implements OnInit, OnDestroy {
     }
     this.myProfileName = signedIn.display_name;
     this.myProfilePhone = signedIn.phone || '';
+    this.route.queryParamMap.pipe(takeUntilDestroyed(this.destroyRef)).subscribe((params) => {
+      const requestedOrderId = Number(params.get('order'));
+      if (!Number.isInteger(requestedOrderId) || requestedOrderId < 1) {
+        return;
+      }
+      this.section = 'orders';
+      this.inspectedOrderId = requestedOrderId;
+      this.inspectedOrderDetail = null;
+      if (this.loadGeneration > 0) {
+        void this.refresh();
+      }
+    });
     this.startAutoRefresh();
     void this.refresh();
   }
@@ -1756,29 +1782,56 @@ export class AdminPage implements OnInit, OnDestroy {
 
   async updateOrder(order: RentalOrder, status: RentalOrder['status']): Promise<void> {
     let note: string | null = null;
-    if (status === 'rejected') {
+    if (status === 'rejected' || status === 'under_review') {
+      const requestingChanges = status === 'under_review';
       const decision = await this.confirmDialog.open({
-        title: `Reject Order #${order.id}?`,
-        message: `Rejecting this request from ${order.customer_name} immediately releases any held inventory.`,
-        confirmLabel: 'Reject order',
-        tone: 'danger',
-        inputLabel: 'Reason for rejection (optional)',
-        inputPlaceholder: 'e.g. Requested dates are outside delivery area',
+        title: requestingChanges ? `Request changes for Order #${order.id}?` : `Reject Order #${order.id}?`,
+        message: requestingChanges
+          ? `Explain what ${order.customer_name} needs to update before the business can accept the request.`
+          : `Rejecting this request from ${order.customer_name} immediately releases any held inventory.`,
+        confirmLabel: requestingChanges ? 'Send change request' : 'Reject order',
+        tone: requestingChanges ? 'primary' : 'danger',
+        inputLabel: requestingChanges ? 'Changes needed' : 'Reason for rejection',
+        inputPlaceholder: requestingChanges
+          ? 'e.g. Please confirm the venue delivery address'
+          : 'e.g. Requested dates are outside delivery area',
       });
       if (!decision.confirmed) {
         return;
       }
       note = decision.note || null;
+      if (!note) {
+        this.error = requestingChanges
+          ? 'Provide the changes needed before sending the request.'
+          : 'Provide a reason before rejecting the request.';
+        return;
+      }
     } else if (status === 'confirmed') {
       const decision = await this.confirmDialog.open({
         title: `Confirm Order #${order.id}?`,
-        message: `Confirming holds the assigned equipment for ${order.customer_name} and notifies them to submit payment.`,
+        message: `Accepting holds the assigned equipment for ${order.customer_name} and notifies them of the next steps.`,
         confirmLabel: 'Confirm booking',
         tone: 'primary',
       });
       if (!decision.confirmed) {
         return;
       }
+      note = decision.note || null;
+    } else if (status === 'ongoing' || status === 'cancelled') {
+      const decision = await this.confirmDialog.open({
+        title: status === 'ongoing' ? `Mark Order #${order.id} as ongoing?` : `Cancel Order #${order.id}?`,
+        message:
+          status === 'ongoing'
+            ? `Confirm that the rental for ${order.customer_name} has started.`
+            : `Cancel this rental for ${order.customer_name} and release its reserved inventory.`,
+        confirmLabel: status === 'ongoing' ? 'Mark ongoing' : 'Cancel rental',
+        tone: status === 'ongoing' ? 'primary' : 'danger',
+        inputLabel: status === 'cancelled' ? 'Cancellation reason (optional)' : undefined,
+      });
+      if (!decision.confirmed) {
+        return;
+      }
+      note = decision.note || null;
     } else if (status === 'completed') {
       const decision = await this.confirmDialog.open({
         title: `Mark Order #${order.id} completed?`,

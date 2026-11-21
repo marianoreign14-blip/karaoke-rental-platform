@@ -9,7 +9,8 @@ from alembic.operations import Operations
 from sqlalchemy import create_engine, inspect, select
 
 from app.core.database import Base, get_db
-from app.models import PasswordResetToken, User
+from app.core.security import hash_password
+from app.models import PasswordResetToken, User, UserRole
 from tests.test_audit_fixes import _create_second_business, _open_db
 from tests.test_rental_workflows import (
     END,
@@ -803,4 +804,176 @@ def test_deep_qa_security_business_logic_and_timezone_regressions(client):
         == 200
     )
 
+
+def test_shared_checkout_routes_multi_business_orders_and_enforces_scope(client):
+    first_product_id = seed_product(client, pricing_basis="per_rental", stock=1)
+    create_admin(client)
+    first_admin_headers = auth_header(client_token_for_user(client, "admin@example.com"))
+    second_business_id, second_product_id, _, _, _ = _create_second_business(client)
+
+    generator, db = _open_db(client)
+    try:
+        first_business_id = db.scalar(select(User.business_id).where(User.email == "admin@example.com"))
+        second_owner = User(
+            email="second-owner@example.com",
+            password_hash=hash_password("secure-admin-password"),
+            display_name="Second Owner",
+            role=UserRole.BUSINESS_ADMIN,
+            business_id=second_business_id,
+        )
+        db.add(second_owner)
+        db.commit()
+    finally:
+        generator.close()
+
+    second_admin_headers = auth_header(token_for(client, "second-owner@example.com", "secure-admin-password"))
+    create_platform_admin(client)
+    platform_headers = auth_header(token_for(client, "platform@example.com", "secure-platform-password"))
+    staff = client.post(
+        "/api/admin/staff",
+        json={
+            "email": "first-staff@example.com",
+            "display_name": "First Staff",
+            "password": "secure-staff-password",
+        },
+        headers=first_admin_headers,
+    )
+    assert staff.status_code == 201, staff.text
+    staff_headers = auth_header(token_for(client, "first-staff@example.com", "secure-staff-password"))
+
+    customer = create_account(client, "shared-checkout@example.com", "secure-customer-password")
+    customer_headers = auth_header(customer["access_token"])
+    checkout_payload = {
+        "submission_key": "shared-checkout-attempt-0001",
+        "starts_at": START,
+        "ends_at": END,
+        "business_orders": [
+            {"business_id": first_business_id, "lines": [{"kind": "product", "item_id": first_product_id, "quantity": 1}]},
+            {"business_id": second_business_id, "lines": [{"kind": "product", "item_id": second_product_id, "quantity": 1}]},
+        ],
+        "payment_method": "gcash",
+        "event_details": "Birthday party at the community hall",
+        "customer_notes": "Please coordinate delivery with the customer.",
+    }
+
+    submitted = client.post("/api/orders/checkout", json=checkout_payload, headers=customer_headers)
+    assert submitted.status_code == 201, submitted.text
+    checkout = submitted.json()
+    assert checkout["checkout_reference"].startswith("KR-")
+    assert len(checkout["orders"]) == 2
+    assert {order["business_id"] for order in checkout["orders"]} == {first_business_id, second_business_id}
+    assert {order["checkout_reference"] for order in checkout["orders"]} == {checkout["checkout_reference"]}
+    assert {order["status"] for order in checkout["orders"]} == {"pending_admin"}
+    assert {order["requested_payment_method"] for order in checkout["orders"]} == {"gcash"}
+    assert {order["event_details"] for order in checkout["orders"]} == {"Birthday party at the community hall"}
+    assert {order["customer_notes"] for order in checkout["orders"]} == {
+        "Please coordinate delivery with the customer."
+    }
+
+    retried = client.post("/api/orders/checkout", json=checkout_payload, headers=customer_headers)
+    assert retried.status_code == 201, retried.text
+    assert [order["id"] for order in retried.json()["orders"]] == [order["id"] for order in checkout["orders"]]
+    changed_payload = {**checkout_payload, "customer_notes": "Changed after submit"}
+    assert client.post("/api/orders/checkout", json=changed_payload, headers=customer_headers).status_code == 409
+    assert len(client.get("/api/orders", headers=customer_headers).json()) == 2
+
+    first_order_id = next(order["id"] for order in checkout["orders"] if order["business_id"] == first_business_id)
+    second_order_id = next(order["id"] for order in checkout["orders"] if order["business_id"] == second_business_id)
+    first_orders = client.get("/api/admin/orders", headers=first_admin_headers).json()
+    second_orders = client.get("/api/admin/orders", headers=second_admin_headers).json()
+    staff_orders = client.get("/api/admin/orders", headers=staff_headers).json()
+    assert [order["id"] for order in first_orders] == [first_order_id]
+    assert [order["id"] for order in staff_orders] == [first_order_id]
+    assert [order["id"] for order in second_orders] == [second_order_id]
+    assert client.get(f"/api/admin/orders/{first_order_id}", headers=second_admin_headers).status_code == 404
+    assert client.get(f"/api/admin/orders/{second_order_id}", headers=staff_headers).status_code == 404
+
+    customer_notifications = client.get("/api/notifications", headers=customer_headers).json()["items"]
+    assert any(item["kind"] == "order_submitted" for item in customer_notifications)
+    for business_headers in (first_admin_headers, second_admin_headers):
+        team_notifications = client.get("/api/notifications", headers=business_headers).json()["items"]
+        assert any(item["kind"] == "order_submitted" for item in team_notifications)
+
+    platform_orders = client.get(
+        "/api/platform/orders",
+        params={
+            "reference_search": checkout["checkout_reference"],
+            "payment_method": "gcash",
+            "payment_status": "unpaid",
+            "created_from": (datetime.now(timezone.utc) - timedelta(minutes=5)).isoformat(),
+        },
+        headers=platform_headers,
+    )
+    assert platform_orders.status_code == 200, platform_orders.text
+    assert {order["id"] for order in platform_orders.json()} == {first_order_id, second_order_id}
+    summary = client.get(
+        "/api/platform/orders/summary",
+        params={"customer_search": "shared-checkout@example.com"},
+        headers=platform_headers,
+    )
+    assert summary.status_code == 200, summary.text
+    assert summary.json()["total"] == 2
+    platform_detail = client.get(f"/api/platform/orders/{first_order_id}", headers=platform_headers)
+    assert platform_detail.status_code == 200
+    assert platform_detail.json()["customer_email"] == "shared-checkout@example.com"
+    assert any(entry["action"] == "order_submitted" for entry in platform_detail.json()["audit_log"])
+
+    # Staff can process their assigned business' request and cannot change the other business' order.
+    review = client.patch(
+        f"/api/admin/orders/{first_order_id}/status",
+        json={"status": "under_review", "note": "Please confirm the event address."},
+        headers=staff_headers,
+    )
+    assert review.status_code == 200, review.text
+    assert review.json()["status"] == "under_review"
+    change_notice = client.get("/api/notifications", headers=customer_headers).json()["items"]
+    assert any(item["kind"] == "order_changes_requested" for item in change_notice)
+    assert client.patch(
+        f"/api/admin/orders/{second_order_id}/status",
+        json={"status": "confirmed", "note": "Unauthorized"},
+        headers=staff_headers,
+    ).status_code == 404
+    assert client.patch(
+        f"/api/admin/orders/{first_order_id}/status",
+        json={"status": "confirmed", "note": "Request accepted"},
+        headers=staff_headers,
+    ).status_code == 200
+    assert client.patch(
+        f"/api/admin/orders/{first_order_id}/status",
+        json={"status": "ongoing"},
+        headers=staff_headers,
+    ).status_code == 200
+    completed = client.patch(
+        f"/api/admin/orders/{first_order_id}/status",
+        json={"status": "completed"},
+        headers=staff_headers,
+    )
+    assert completed.status_code == 200, completed.text
+    assert completed.json()["status"] == "completed"
+    assert len(completed.json()["history"]) >= 5
+
+
+def test_multi_business_checkout_rolls_back_if_any_business_is_unavailable(client):
+    product_id = seed_product(client, pricing_basis="per_rental", stock=1)
+    create_admin(client)
+    admin_headers = auth_header(client_token_for_user(client, "admin@example.com"))
+    customer = create_account(client, "rollback-checkout@example.com", "secure-customer-password")
+
+    failed = client.post(
+        "/api/orders/checkout",
+        json={
+            "submission_key": "rollback-checkout-attempt-01",
+            "starts_at": START,
+            "ends_at": END,
+            "business_orders": [
+                {"business_id": 1, "lines": [{"kind": "product", "item_id": product_id, "quantity": 1}]},
+                {"business_id": 99999, "lines": [{"kind": "product", "item_id": product_id, "quantity": 1}]},
+            ],
+            "payment_method": "cash",
+        },
+        headers=auth_header(customer["access_token"]),
+    )
+    assert failed.status_code == 404
+    assert client.get("/api/orders", headers=auth_header(customer["access_token"])).json() == []
+    assert client.get("/api/admin/orders", headers=admin_headers).json() == []
 

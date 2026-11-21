@@ -10,10 +10,10 @@ main {
 
 .registration-panel {
   padding: clamp(22px, 4vw, 34px);
-  border: 1px solid var(--border);
+  border: 0;
   border-radius: 0;
-  background: var(--bg-surface);
-  box-shadow: var(--shadow-md);
+  background: transparent;
+  box-shadow: none;
 
   h1 {
     margin: 8px 0;

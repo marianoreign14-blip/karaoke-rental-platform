@@ -808,7 +808,13 @@ def platform_reports_summary(
         bucket = per_business.get(order.business_id)
         if bucket:
             bucket["orders"] += 1
-        if order.status in {RentalStatus.PENDING_ADMIN, RentalStatus.CONFIRMED, RentalStatus.COMPLETED}:
+        if order.status in {
+            RentalStatus.PENDING_ADMIN,
+            RentalStatus.UNDER_REVIEW,
+            RentalStatus.CONFIRMED,
+            RentalStatus.ONGOING,
+            RentalStatus.COMPLETED,
+        }:
             total_order_value_cents += order.total_cents
             if bucket:
                 bucket["active_order_value_cents"] += order.total_cents

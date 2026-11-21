@@ -144,13 +144,17 @@ export class OrderProgressComponent {
   @Input() paymentStatus = 'unpaid';
 
   get steps(): StepItem[] {
-    const isConfirmed = this.status === 'confirmed' || this.status === 'completed';
+    const isConfirmed = this.status === 'confirmed' || this.status === 'ongoing' || this.status === 'completed';
     const isPaid = this.paymentStatus === 'paid';
     const isCompleted = this.status === 'completed';
 
     return [
       { label: 'Request sent', done: true, current: false },
-      { label: 'Business confirmed', done: isConfirmed, current: this.status === 'pending_admin' },
+      {
+        label: 'Business confirmed',
+        done: isConfirmed,
+        current: this.status === 'pending_admin' || this.status === 'under_review',
+      },
       { label: 'Payment verified', done: isPaid, current: isConfirmed && !isPaid },
       { label: 'Completed', done: isCompleted, current: isConfirmed && isPaid && !isCompleted },
     ];
@@ -159,6 +163,12 @@ export class OrderProgressComponent {
   get helperMessage(): string {
     if (this.status === 'pending_admin') {
       return 'Waiting for the rental business to review and confirm your booking. You can still submit payment details or request changes.';
+    }
+    if (this.status === 'under_review') {
+      return 'The business requested more information before accepting this rental. Review the request details and contact the business if needed.';
+    }
+    if (this.status === 'ongoing') {
+      return 'Your rental is in progress. Contact the business if you need help during the event.';
     }
     if (this.status === 'confirmed' && this.paymentStatus === 'awaiting_verification') {
       return 'Your booking is confirmed. The business is reviewing your submitted payment proof.';

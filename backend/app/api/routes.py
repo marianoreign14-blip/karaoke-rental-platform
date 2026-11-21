@@ -1,9 +1,11 @@
 from datetime import datetime, timezone
 import hashlib
+import json
 import re
+import uuid
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, status
 from pydantic import EmailStr, TypeAdapter, ValidationError
-from sqlalchemy import Text, delete, func, select, update
+from sqlalchemy import Text, case, delete, exists, func, or_, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, selectinload
 from slowapi import Limiter
@@ -45,6 +47,8 @@ from app.models import (
     PlatformSetting,
     Product,
     QualityTier,
+    PaymentMethod,
+    RentalCheckout,
     RentalOrder,
     RentalPackage,
     RentalStatus,
@@ -65,6 +69,7 @@ from app.schemas import (
     BusinessSubscriptionInput,
     LoginInput,
     OrderCreate,
+    RentalCheckoutCreate,
     OrderRequestInput,
     OrderStatusInput,
     PackageInput,
@@ -107,6 +112,76 @@ def _as_utc(value: datetime) -> datetime:
 def _ilike_term(raw: str) -> str:
     escaped = raw.strip().replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
     return f"%{escaped}%"
+
+
+def _platform_order_filters(
+    *,
+    business_id: int | None,
+    status_filter: RentalStatus | None,
+    customer_search: str | None,
+    reference_search: str | None,
+    created_from: datetime | None,
+    created_to: datetime | None,
+    payment_status: str | None,
+    payment_method: PaymentMethod | None,
+):
+    conditions = []
+    if business_id is not None:
+        conditions.append(RentalOrder.business_id == business_id)
+    if status_filter is not None:
+        conditions.append(RentalOrder.status == status_filter)
+    if customer_search and customer_search.strip():
+        term = _ilike_term(customer_search)
+        conditions.append(or_(User.display_name.ilike(term), User.email.ilike(term)))
+    if reference_search and reference_search.strip():
+        term = _ilike_term(reference_search)
+        conditions.append(
+            or_(
+                RentalCheckout.reference.ilike(term),
+                RentalOrder.id.cast(Text).ilike(term),
+            )
+        )
+    if created_from is not None:
+        conditions.append(RentalOrder.created_at >= _as_utc(created_from))
+    if created_to is not None:
+        conditions.append(RentalOrder.created_at <= _as_utc(created_to))
+    if payment_method is not None:
+        conditions.append(RentalCheckout.payment_method == payment_method)
+    if payment_status is not None:
+        net_paid = (
+            select(
+                func.coalesce(
+                    func.sum(
+                        case(
+                            (PaymentEntry.kind == PaymentEntryKind.PAYMENT, PaymentEntry.amount_cents),
+                            else_=-PaymentEntry.amount_cents,
+                        )
+                    ),
+                    0,
+                )
+            )
+            .where(
+                PaymentEntry.order_id == RentalOrder.id,
+                PaymentEntry.status == PaymentEntryStatus.VERIFIED,
+            )
+            .scalar_subquery()
+        )
+        has_refund = exists(
+            select(PaymentEntry.id).where(
+                PaymentEntry.order_id == RentalOrder.id,
+                PaymentEntry.status == PaymentEntryStatus.VERIFIED,
+                PaymentEntry.kind == PaymentEntryKind.REFUND,
+            )
+        )
+        if payment_status == "paid":
+            conditions.append(net_paid >= RentalOrder.total_cents)
+        elif payment_status == "partially_paid":
+            conditions.extend((net_paid > 0, net_paid < RentalOrder.total_cents))
+        elif payment_status == "refunded":
+            conditions.extend((net_paid <= 0, has_refund))
+        else:
+            conditions.extend((net_paid <= 0, ~has_refund))
+    return conditions
 
 
 def _image_response(
@@ -654,6 +729,135 @@ def platform_audit_logs(
         }
         for entry, business_name in rows
     ]
+
+
+@api.get("/platform/orders/summary")
+def platform_order_summary(
+    business_id: int | None = None,
+    status_filter: RentalStatus | None = Query(default=None, alias="status"),
+    customer_search: str | None = Query(default=None, max_length=160),
+    reference_search: str | None = Query(default=None, max_length=80),
+    created_from: datetime | None = None,
+    created_to: datetime | None = None,
+    payment_status: str | None = None,
+    payment_method: PaymentMethod | None = None,
+    _: User = Depends(platform_administrator),
+    db: Session = Depends(get_db),
+):
+    if payment_status not in {None, "unpaid", "partially_paid", "paid", "refunded"}:
+        raise HTTPException(status_code=422, detail="Invalid payment status filter")
+    if created_from is not None and created_to is not None and _as_utc(created_to) < _as_utc(created_from):
+        raise HTTPException(status_code=422, detail="created_to must not be earlier than created_from")
+    conditions = _platform_order_filters(
+        business_id=business_id,
+        status_filter=status_filter,
+        customer_search=customer_search,
+        reference_search=reference_search,
+        created_from=created_from,
+        created_to=created_to,
+        payment_status=payment_status,
+        payment_method=payment_method,
+    )
+    grouped = db.execute(
+        select(RentalOrder.status, func.count(RentalOrder.id), func.coalesce(func.sum(RentalOrder.total_cents), 0))
+        .join(User, User.id == RentalOrder.customer_id)
+        .outerjoin(RentalCheckout, RentalCheckout.id == RentalOrder.checkout_id)
+        .where(*conditions)
+        .group_by(RentalOrder.status)
+    ).all()
+    by_status = {item.value: 0 for item in RentalStatus}
+    total = 0
+    total_value_cents = 0
+    for order_status, count, value_cents in grouped:
+        by_status[order_status.value] = count
+        total += count
+        total_value_cents += value_cents
+    return {"total": total, "orders_by_status": by_status, "total_value_cents": total_value_cents}
+
+
+@api.get("/platform/orders")
+def platform_orders(
+    business_id: int | None = None,
+    status_filter: RentalStatus | None = Query(default=None, alias="status"),
+    customer_search: str | None = Query(default=None, max_length=160),
+    reference_search: str | None = Query(default=None, max_length=80),
+    created_from: datetime | None = None,
+    created_to: datetime | None = None,
+    payment_status: str | None = None,
+    payment_method: PaymentMethod | None = None,
+    limit: int = Query(default=100, ge=1, le=500),
+    offset: int = Query(default=0, ge=0),
+    _: User = Depends(platform_administrator),
+    db: Session = Depends(get_db),
+):
+    if payment_status not in {None, "unpaid", "partially_paid", "paid", "refunded"}:
+        raise HTTPException(status_code=422, detail="Invalid payment status filter")
+    if created_from is not None and created_to is not None and _as_utc(created_to) < _as_utc(created_from):
+        raise HTTPException(status_code=422, detail="created_to must not be earlier than created_from")
+    conditions = _platform_order_filters(
+        business_id=business_id,
+        status_filter=status_filter,
+        customer_search=customer_search,
+        reference_search=reference_search,
+        created_from=created_from,
+        created_to=created_to,
+        payment_status=payment_status,
+        payment_method=payment_method,
+    )
+    orders = db.scalars(
+        select(RentalOrder)
+        .join(User, User.id == RentalOrder.customer_id)
+        .outerjoin(RentalCheckout, RentalCheckout.id == RentalOrder.checkout_id)
+        .options(
+            selectinload(RentalOrder.customer),
+            selectinload(RentalOrder.lines),
+            selectinload(RentalOrder.requests),
+            selectinload(RentalOrder.payments),
+            selectinload(RentalOrder.history),
+            selectinload(RentalOrder.business),
+            selectinload(RentalOrder.checkout),
+        )
+        .where(*conditions)
+        .order_by(RentalOrder.created_at.desc(), RentalOrder.id.desc())
+        .offset(offset)
+        .limit(limit)
+    )
+    return [_order_read(order) for order in orders]
+
+
+@api.get("/platform/orders/{order_id}")
+def platform_order_detail(
+    order_id: int,
+    _: User = Depends(platform_administrator),
+    db: Session = Depends(get_db),
+):
+    order = _load_order(db, order_id)
+    result = _order_read(order)
+    result["customer_email"] = order.customer.email
+    result["customer_phone"] = order.customer.phone
+    result["audit_log"] = [
+        {
+            "id": entry.id,
+            "business_id": entry.business_id,
+            "business_name": order.business.name,
+            "actor_id": entry.actor_id,
+            "action": entry.action,
+            "entity_type": entry.entity_type,
+            "entity_id": entry.entity_id,
+            "details": entry.details,
+            "created_at": entry.created_at,
+        }
+        for entry in db.scalars(
+            select(BusinessAuditLog)
+            .where(
+                BusinessAuditLog.business_id == order.business_id,
+                BusinessAuditLog.entity_type == "rental_order",
+                BusinessAuditLog.entity_id == order.id,
+            )
+            .order_by(BusinessAuditLog.created_at, BusinessAuditLog.id)
+        )
+    ]
+    return result
 
 
 @api.get("/admin/business")
@@ -1388,6 +1592,15 @@ def _payment_summary(order: RentalOrder) -> tuple[int, int, str]:
     return paid, balance, payment_status
 
 
+def _checkout_payload_hash(payload: RentalCheckoutCreate) -> str:
+    canonical = json.dumps(
+        payload.model_dump(mode="json", exclude={"submission_key"}),
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+
 def _order_read(order: RentalOrder) -> dict:
     paid, balance, payment_status = _payment_summary(order)
     return {
@@ -1397,9 +1610,16 @@ def _order_read(order: RentalOrder) -> dict:
         "business_slug": order.business.slug,
         "customer_id": order.customer_id,
         "customer_name": order.customer.display_name,
+        "customer_email": order.customer.email,
+        "customer_phone": order.customer.phone,
         "starts_at": order.starts_at,
         "ends_at": order.ends_at,
+        "created_at": order.created_at,
         "status": order.status.value,
+        "checkout_reference": order.checkout.reference if order.checkout else None,
+        "requested_payment_method": order.checkout.payment_method.value if order.checkout else None,
+        "event_details": order.checkout.event_details if order.checkout else None,
+        "customer_notes": order.checkout.customer_notes if order.checkout else None,
         "total_cents": order.total_cents,
         "paid_cents": paid,
         "balance_cents": balance,
@@ -1472,12 +1692,24 @@ def _load_order(db: Session, order_id: int) -> RentalOrder:
             selectinload(RentalOrder.payments),
             selectinload(RentalOrder.history),
             selectinload(RentalOrder.business),
+            selectinload(RentalOrder.checkout),
         )
         .where(RentalOrder.id == order_id)
     )
     if order is None:
         raise HTTPException(status_code=404, detail="Order not found")
     return order
+
+
+def _checkout_read(db: Session, checkout: RentalCheckout) -> dict:
+    order_ids = db.scalars(
+        select(RentalOrder.id).where(RentalOrder.checkout_id == checkout.id).order_by(RentalOrder.id)
+    ).all()
+    return {
+        "checkout_reference": checkout.reference,
+        "created_at": checkout.created_at,
+        "orders": [_order_read(_load_order(db, order_id)) for order_id in order_ids],
+    }
 
 
 def _order_for_user(db: Session, order_id: int, user: User) -> RentalOrder:
@@ -1508,6 +1740,160 @@ def _persist_lines(db: Session, order: RentalOrder, line_data: list[dict]) -> li
     db.add_all(lines)
     db.flush()
     return lines
+
+
+@api.post("/orders/checkout", status_code=status.HTTP_201_CREATED)
+def create_checkout(
+    payload: RentalCheckoutCreate,
+    user: User = Depends(current_user),
+    db: Session = Depends(get_db),
+):
+    if user.role != UserRole.CUSTOMER:
+        raise HTTPException(status_code=403, detail="Customer access is required to submit a rental request")
+
+    customer = db.scalar(select(User).where(User.id == user.id).with_for_update())
+    if customer is None or not customer.is_active:
+        raise HTTPException(status_code=403, detail="Your customer account is not active")
+
+    payload_hash = _checkout_payload_hash(payload)
+    existing = db.scalar(
+        select(RentalCheckout).where(
+            RentalCheckout.customer_id == user.id,
+            RentalCheckout.submission_key == payload.submission_key,
+        )
+    )
+    if existing is not None:
+        if existing.payload_hash != payload_hash:
+            raise HTTPException(
+                status_code=409,
+                detail="This checkout key was already used for different request details. Refresh the request and retry.",
+            )
+        return _checkout_read(db, existing)
+
+    checkout = RentalCheckout(
+        reference=f"KR-{uuid.uuid4().hex.upper()}",
+        customer_id=user.id,
+        submission_key=payload.submission_key,
+        payload_hash=payload_hash,
+        payment_method=payload.payment_method,
+        event_details=payload.event_details,
+        customer_notes=payload.customer_notes,
+    )
+    db.add(checkout)
+    db.flush()
+
+    created_order_ids = []
+    for business_order in sorted(payload.business_orders, key=lambda group: group.business_id):
+        business = db.scalar(
+            select(Business)
+            .where(
+                Business.id == business_order.business_id,
+                Business.status == BusinessStatus.ACTIVE.value,
+                Business.is_listed.is_(True),
+            )
+            .with_for_update()
+        )
+        if business is None:
+            raise HTTPException(status_code=404, detail="One of the selected business storefronts is unavailable")
+
+        membership = db.scalar(
+            select(BusinessCustomer).where(
+                BusinessCustomer.business_id == business.id,
+                BusinessCustomer.customer_id == user.id,
+            )
+        )
+        if membership is not None and not membership.is_active:
+            raise HTTPException(status_code=403, detail="Your customer account is not active for a selected business")
+        if membership is None:
+            db.add(BusinessCustomer(business_id=business.id, customer_id=user.id))
+            db.flush()
+
+        lock_requested_items(db, business_order.lines, business.id)
+        lines_data, required, total_cents = build_order_lines(
+            db,
+            business_order.lines,
+            payload.starts_at,
+            payload.ends_at,
+            business.id,
+        )
+        order = RentalOrder(
+            checkout_id=checkout.id,
+            business_id=business.id,
+            customer_id=user.id,
+            starts_at=payload.starts_at,
+            ends_at=payload.ends_at,
+            status=RentalStatus.PENDING_ADMIN,
+            total_cents=total_cents,
+        )
+        db.add(order)
+        db.flush()
+        created_order_ids.append(order.id)
+        lines = _persist_lines(db, order, lines_data)
+        allocate_assets(db, order, lines, required)
+        _add_history(
+            db,
+            order,
+            user,
+            "submitted",
+            {
+                "status": RentalStatus.PENDING_ADMIN.value,
+                "lines": lines_data,
+                "checkout_reference": checkout.reference,
+            },
+        )
+        _audit(
+            db,
+            user,
+            business.id,
+            "order_submitted",
+            "rental_order",
+            order.id,
+            {"checkout_reference": checkout.reference, "customer_id": user.id},
+        )
+        notify_business_team(
+            db,
+            business_id=business.id,
+            kind="order_submitted",
+            title=f"New rental request {checkout.reference}",
+            message=f"{user.display_name} submitted request {checkout.reference} for your business.",
+            link=f"/admin?order={order.id}",
+        )
+
+    notify_user(
+        db,
+        user_id=user.id,
+        kind="order_submitted",
+        title=f"Rental request {checkout.reference} submitted",
+        message=f"Your request was sent to {len(payload.business_orders)} rental business(es) for review.",
+        link=f"/orders/{created_order_ids[0]}",
+    )
+    db.commit()
+    db.refresh(checkout)
+    return _checkout_read(db, checkout)
+
+
+@api.post("/orders/checkout/quote")
+def quote_checkout(payload: RentalCheckoutCreate, db: Session = Depends(get_db)):
+    total_cents = 0
+    for business_order in payload.business_orders:
+        business = db.scalar(
+            select(Business).where(
+                Business.id == business_order.business_id,
+                Business.status == BusinessStatus.ACTIVE.value,
+                Business.is_listed.is_(True),
+            )
+        )
+        if business is None:
+            raise HTTPException(status_code=404, detail="One of the selected business storefronts is unavailable")
+        _, _, business_total = build_order_lines(
+            db,
+            business_order.lines,
+            payload.starts_at,
+            payload.ends_at,
+            business.id,
+        )
+        total_cents += business_total
+    return {"total_cents": total_cents, "is_estimate": True}
 
 
 @api.post("/orders", status_code=status.HTTP_201_CREATED)
@@ -1552,13 +1938,31 @@ def create_order(payload: OrderCreate, user: User = Depends(current_user), db: S
     lines = _persist_lines(db, order, lines_data)
     allocate_assets(db, order, lines, required)
     _add_history(db, order, user, "submitted", {"status": RentalStatus.PENDING_ADMIN.value, "lines": lines_data})
+    _audit(
+        db,
+        user,
+        business.id,
+        "order_submitted",
+        "rental_order",
+        order.id,
+        {"customer_id": user.id},
+    )
     notify_business_team(
         db,
         business_id=payload.business_id,
         kind="order_submitted",
         title=f"New rental request #{order.id}",
         message=f"{user.display_name} submitted rental request #{order.id}.",
-        link="/admin",
+        link=f"/admin?order={order.id}",
+    )
+    notify_user(
+        db,
+        user_id=user.id,
+        business_id=payload.business_id,
+        kind="order_submitted",
+        title=f"Rental request #{order.id} submitted",
+        message=f"Your rental request was sent to {business.name} for review.",
+        link=f"/orders/{order.id}",
     )
     db.commit()
     return _order_read(_load_order(db, order.id))
@@ -1598,6 +2002,7 @@ def list_orders(
             selectinload(RentalOrder.payments),
             selectinload(RentalOrder.history),
             selectinload(RentalOrder.business),
+            selectinload(RentalOrder.checkout),
         )
     )
     return [_order_read(order) for order in orders]
@@ -1649,7 +2054,7 @@ def create_order_request(
             status_code=409,
             detail="This business is currently inactive and cannot accept new order requests",
         )
-    if order.status not in {RentalStatus.PENDING_ADMIN, RentalStatus.CONFIRMED}:
+    if order.status not in {RentalStatus.PENDING_ADMIN, RentalStatus.UNDER_REVIEW, RentalStatus.CONFIRMED}:
         raise HTTPException(status_code=409, detail="This order is not eligible for a change or cancellation request")
     pending = db.scalar(
         select(OrderRequest.id).where(
@@ -1719,7 +2124,12 @@ def submit_payment(
         )
     if payload.kind != PaymentEntryKind.PAYMENT:
         raise HTTPException(status_code=422, detail="Customers may submit payment details, not refunds")
-    if order.status not in {RentalStatus.PENDING_ADMIN, RentalStatus.CONFIRMED}:
+    if order.status not in {
+        RentalStatus.PENDING_ADMIN,
+        RentalStatus.UNDER_REVIEW,
+        RentalStatus.CONFIRMED,
+        RentalStatus.ONGOING,
+    }:
         raise HTTPException(status_code=409, detail="Payments cannot be submitted for this order status")
     entry = PaymentEntry(
         business_id=order.business_id,
@@ -2294,7 +2704,7 @@ def admin_inventory(admin: User = Depends(administrator), db: Session = Depends(
         end_utc = _as_utc(ends_at)
         derived = (
             "currently rented"
-            if order_status == RentalStatus.CONFIRMED and start_utc <= now < end_utc
+            if order_status in {RentalStatus.CONFIRMED, RentalStatus.ONGOING} and start_utc <= now < end_utc
             else "reserved"
         )
         if rental_states.get(asset_id) != "currently rented":
@@ -2564,6 +2974,7 @@ def admin_orders(admin: User = Depends(administrator), db: Session = Depends(get
             selectinload(RentalOrder.payments),
             selectinload(RentalOrder.history),
             selectinload(RentalOrder.business),
+            selectinload(RentalOrder.checkout),
         )
         .where(RentalOrder.business_id == business_id)
         .order_by(RentalOrder.created_at.desc())
@@ -2650,15 +3061,31 @@ def decide_order_status(
     )
     if order is None:
         raise HTTPException(status_code=404, detail="Order not found")
+    if payload.status in {RentalStatus.REJECTED, RentalStatus.UNDER_REVIEW} and not payload.note:
+        raise HTTPException(
+            status_code=422,
+            detail="Provide a reason when rejecting a request or asking the customer for changes",
+        )
     allowed = {
-        RentalStatus.PENDING_ADMIN: {RentalStatus.CONFIRMED, RentalStatus.REJECTED},
-        RentalStatus.CONFIRMED: {RentalStatus.COMPLETED},
+        RentalStatus.PENDING_ADMIN: {
+            RentalStatus.UNDER_REVIEW,
+            RentalStatus.CONFIRMED,
+            RentalStatus.REJECTED,
+            RentalStatus.CANCELLED,
+        },
+        RentalStatus.UNDER_REVIEW: {
+            RentalStatus.CONFIRMED,
+            RentalStatus.REJECTED,
+            RentalStatus.CANCELLED,
+        },
+        RentalStatus.CONFIRMED: {RentalStatus.ONGOING, RentalStatus.COMPLETED, RentalStatus.CANCELLED},
+        RentalStatus.ONGOING: {RentalStatus.COMPLETED, RentalStatus.CANCELLED},
     }
     if payload.status not in allowed.get(order.status, set()):
         raise HTTPException(status_code=409, detail=f"Cannot move an order from {order.status.value} to {payload.status.value}")
     old_status = order.status
     order.status = payload.status
-    if payload.status in {RentalStatus.REJECTED, RentalStatus.COMPLETED}:
+    if payload.status in {RentalStatus.REJECTED, RentalStatus.CANCELLED, RentalStatus.COMPLETED}:
         release_allocations(db, order)
         now = datetime.now(timezone.utc)
         pending_requests = db.scalars(
@@ -2689,16 +3116,24 @@ def decide_order_status(
         order.id,
         {"from": old_status.value, "to": payload.status.value, "note": payload.note},
     )
+    if payload.status == RentalStatus.UNDER_REVIEW:
+        notification_kind = "order_changes_requested"
+        notification_title = f"Changes requested for order #{order.id}"
+        notification_message = f"The business asked for changes to your rental request #{order.id}. Note: {payload.note}"
+    else:
+        notification_kind = "order_status_changed"
+        notification_title = f"Order #{order.id} is now {payload.status.value.replace('_', ' ')}"
+        notification_message = (
+            f"Your rental request #{order.id} was updated to {payload.status.value.replace('_', ' ')}."
+            + (f" Note: {payload.note}" if payload.note else "")
+        )
     notify_user(
         db,
         user_id=order.customer_id,
         business_id=business_id,
-        kind="order_status_changed",
-        title=f"Order #{order.id} is now {payload.status.value.replace('_', ' ')}",
-        message=(
-            f"Your rental request #{order.id} was updated to {payload.status.value.replace('_', ' ')}."
-            + (f" Note: {payload.note}" if payload.note else "")
-        ),
+        kind=notification_kind,
+        title=notification_title,
+        message=notification_message,
         link=f"/orders/{order.id}",
     )
     db.commit()
@@ -2761,7 +3196,7 @@ def decide_order_request(
         raise HTTPException(status_code=404, detail="Order request not found")
     if request_record.status != RequestStatus.PENDING:
         raise HTTPException(status_code=409, detail="This request has already been decided")
-    if order.status not in {RentalStatus.PENDING_ADMIN, RentalStatus.CONFIRMED}:
+    if order.status not in {RentalStatus.PENDING_ADMIN, RentalStatus.UNDER_REVIEW, RentalStatus.CONFIRMED}:
         raise HTTPException(status_code=409, detail="The order is no longer eligible for this request")
 
     before_status = order.status
@@ -3045,7 +3480,13 @@ def report_summary(
     active_order_value_cents = 0
     for order in orders:
         orders_by_status[order.status.value] = orders_by_status.get(order.status.value, 0) + 1
-        if order.status in {RentalStatus.PENDING_ADMIN, RentalStatus.CONFIRMED, RentalStatus.COMPLETED}:
+        if order.status in {
+            RentalStatus.PENDING_ADMIN,
+            RentalStatus.UNDER_REVIEW,
+            RentalStatus.CONFIRMED,
+            RentalStatus.ONGOING,
+            RentalStatus.COMPLETED,
+        }:
             active_order_value_cents += order.total_cents
 
     active_assets = db.scalar(

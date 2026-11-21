@@ -108,7 +108,10 @@
           <span class="step-icon"><app-icon name="package" [size]="16"></app-icon></span>
           <div>
             <strong>2. Build your request</strong>
-            <p>Combine karaoke rigs or ready-made event packages from one business.</p>
+            <p>
+              Combine equipment and packages from multiple businesses. Each receives its own request under one
+              reference.
+            </p>
           </div>
         </div>
         <div class="hero-step">
@@ -491,7 +494,7 @@
         @if (cart.length > 0) {
         <div class="selected-biz-pill">
           <app-icon name="store" [size]="14"></app-icon>
-          <span><strong>Selected business:</strong> {{ cartBusinessName }}</span>
+          <span><strong>Business orders:</strong> {{ cartBusinessName }}</span>
         </div>
         } @if (rentalDurationLabel) {
         <p><strong>Rental duration:</strong> {{ rentalDurationLabel }}</p>
@@ -547,6 +550,36 @@
           </div>
           }
         </div>
+        <div class="form-grid checkout-details">
+          <label>
+            Event details
+            <textarea
+              [(ngModel)]="eventDetails"
+              name="eventDetails"
+              maxlength="2000"
+              placeholder="Event type, venue, or setup details"
+              (ngModelChange)="onCheckoutDetailsChanged()"
+            ></textarea>
+          </label>
+          <label>
+            Notes for the rental businesses
+            <textarea
+              [(ngModel)]="customerNotes"
+              name="customerNotes"
+              maxlength="2000"
+              placeholder="Delivery instructions or other requests"
+              (ngModelChange)="onCheckoutDetailsChanged()"
+            ></textarea>
+          </label>
+          <label>
+            Preferred payment method
+            <select [(ngModel)]="paymentMethod" name="paymentMethod" (ngModelChange)="onCheckoutDetailsChanged()">
+              <option value="cash">Cash</option>
+              <option value="gcash">GCash</option>
+              <option value="bank_transfer">Bank transfer</option>
+            </select>
+          </label>
+        </div>
         @if (quoteTotal !== null) {
         <div class="quote-total">
           <div>
@@ -564,10 +597,7 @@
           >
             {{ quoting ? 'Calculating…' : 'Calculate estimate' }}
           </ion-button>
-          <ion-button
-            [disabled]="submitting || quoteTotal === null || (user() !== null && user()?.role !== 'customer')"
-            (click)="submitOrder()"
-          >
+          <ion-button [disabled]="submitting" (click)="submitOrder()">
             {{ submitting ? 'Submitting…' : 'Submit rental request' }}
           </ion-button>
           <ion-button fill="clear" color="medium" (click)="clearSelection()">Clear selection</ion-button>
@@ -576,6 +606,8 @@
         <p class="policy-note">
           Checkout is unavailable until an administrator configures the pricing basis for every selected item.
         </p>
+        } @else if (quoteTotal === null) {
+        <p class="policy-note">Calculate an estimate before submitting your rental request.</p>
         } @if (!user()) {
         <p class="policy-note">
           A customer account is required to submit an order. <a routerLink="/account">Sign in or register</a>.

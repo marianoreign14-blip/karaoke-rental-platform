@@ -66,7 +66,9 @@ class AssetCondition(StrEnum):
 
 class RentalStatus(StrEnum):
     PENDING_ADMIN = "pending_admin"
+    UNDER_REVIEW = "under_review"
     CONFIRMED = "confirmed"
+    ONGOING = "ongoing"
     REJECTED = "rejected"
     CANCELLED = "cancelled"
     COMPLETED = "completed"
@@ -150,6 +152,25 @@ class User(Base):
     business_id: Mapped[int | None] = mapped_column(ForeignKey("businesses.id", ondelete="RESTRICT"), index=True)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     created_at: Mapped[datetime] = mapped_column(UTCDateTime(), server_default=func.now())
+
+
+class RentalCheckout(Base):
+    __tablename__ = "rental_checkouts"
+    __table_args__ = (
+        UniqueConstraint("customer_id", "submission_key", name="uq_rental_checkout_customer_submission"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    reference: Mapped[str] = mapped_column(String(40), unique=True)
+    customer_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="RESTRICT"), index=True)
+    submission_key: Mapped[str] = mapped_column(String(128))
+    payload_hash: Mapped[str] = mapped_column(String(64))
+    payment_method: Mapped[PaymentMethod] = mapped_column(enum_column(PaymentMethod, "checkout_payment_method"))
+    event_details: Mapped[str | None] = mapped_column(Text)
+    customer_notes: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime(), server_default=func.now())
+    customer: Mapped[User] = relationship()
+    orders: Mapped[list["RentalOrder"]] = relationship(back_populates="checkout")
 
 
 class BusinessCustomer(Base):
@@ -277,6 +298,7 @@ class RentalOrder(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     business_id: Mapped[int] = mapped_column(ForeignKey("businesses.id", ondelete="RESTRICT"), index=True)
     customer_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="RESTRICT"), index=True)
+    checkout_id: Mapped[int | None] = mapped_column(ForeignKey("rental_checkouts.id", ondelete="RESTRICT"), index=True)
     starts_at: Mapped[datetime] = mapped_column(UTCDateTime())
     ends_at: Mapped[datetime] = mapped_column(UTCDateTime())
     status: Mapped[RentalStatus] = mapped_column(
@@ -290,6 +312,7 @@ class RentalOrder(Base):
     requests: Mapped[list["OrderRequest"]] = relationship(back_populates="rental_order")
     history: Mapped[list["OrderHistory"]] = relationship(order_by="OrderHistory.created_at")
     business: Mapped[Business] = relationship()
+    checkout: Mapped[RentalCheckout | None] = relationship(back_populates="orders")
 
 
 class OrderLine(Base):

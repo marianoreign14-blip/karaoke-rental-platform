@@ -395,9 +395,15 @@ def test_manual_payment_refund_after_cancellation_and_audit_entity_id(client):
     assert any(event["action"] == "manual_payment_recorded" for event in refreshed["history"])
 
     # Reject order -> admin must still be allowed to record a refund up to paid_cents
-    assert client.patch(
+    missing_reason = client.patch(
         f"/api/admin/orders/{order_id}/status",
         json={"status": "rejected"},
+        headers=admin_headers,
+    )
+    assert missing_reason.status_code == 422
+    assert client.patch(
+        f"/api/admin/orders/{order_id}/status",
+        json={"status": "rejected", "note": "The rental dates cannot be fulfilled."},
         headers=admin_headers,
     ).status_code == 200
 

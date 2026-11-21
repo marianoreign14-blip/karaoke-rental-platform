@@ -311,6 +311,34 @@ class OrderCreate(APIModel):
         return self
 
 
+class CheckoutBusinessOrders(APIModel):
+    business_id: int
+    lines: Annotated[list[OrderLineInput], Field(min_length=1, max_length=50)]
+
+
+class RentalCheckoutCreate(APIModel):
+    submission_key: trimmed_str(8, 128)
+    starts_at: datetime
+    ends_at: datetime
+    business_orders: Annotated[list[CheckoutBusinessOrders], Field(min_length=1, max_length=25)]
+    payment_method: PaymentMethod
+    event_details: optional_trimmed_str(2000) = None
+    customer_notes: optional_trimmed_str(2000) = None
+
+    @model_validator(mode="after")
+    def validate_checkout(self):
+        if self.starts_at.tzinfo is None or self.ends_at.tzinfo is None:
+            raise ValueError("Rental timestamps must include a timezone")
+        self.starts_at = _to_utc(self.starts_at)
+        self.ends_at = _to_utc(self.ends_at)
+        if self.ends_at <= self.starts_at:
+            raise ValueError("ends_at must be later than starts_at")
+        business_ids = [group.business_id for group in self.business_orders]
+        if len(set(business_ids)) != len(business_ids):
+            raise ValueError("Each business may only appear once in a checkout")
+        return self
+
+
 class OrderStatusInput(APIModel):
     status: RentalStatus
     note: optional_trimmed_str(1000) = None

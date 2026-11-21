@@ -3,7 +3,7 @@
 }
 
 ion-toolbar {
-  --background: rgba(255, 255, 255, 0.94);
+  --background: var(--app-background);
   --min-height: var(--topbar-h);
   --padding-start: 0;
   --padding-end: 0;

@@ -258,7 +258,9 @@
       <article class="order-card">
         <header>
           <div>
-            <p class="eyebrow">ORDER #{{ order.id }} · {{ order.business_name }}</p>
+            <p class="eyebrow">
+              REQUEST {{ order.checkout_reference || ('#' + order.id) }} · {{ order.business_name }}
+            </p>
             <h3>{{ order.starts_at | date: 'medium' }} – {{ order.ends_at | date: 'medium' }}</h3>
           </div>
           <div class="status-pills">
@@ -271,6 +273,13 @@
         </header>
 
         <app-order-progress [status]="order.status" [paymentStatus]="order.payment_status"></app-order-progress>
+        @if (order.requested_payment_method) {
+        <p class="policy-note">Preferred payment method: {{ order.requested_payment_method.replaceAll('_', ' ') }}</p>
+        } @if (order.event_details) {
+        <p class="policy-note"><strong>Event details:</strong> {{ order.event_details }}</p>
+        } @if (order.customer_notes) {
+        <p class="policy-note"><strong>Your notes:</strong> {{ order.customer_notes }}</p>
+        }
 
         <div class="order-lines">
           @for (line of order.lines; track line.id) {
@@ -360,7 +369,7 @@
           </button>
           } @else if (canRequest(order) && hasPendingRequest(order)) {
           <span class="policy-note">A change or cancellation request is awaiting administrator review.</span>
-          } @if (order.balance_cents > 0 && canRequest(order)) {
+          } @if (order.balance_cents > 0 && (canRequest(order) || order.status === 'ongoing')) {
           <button class="secondary-button" type="button" (click)="openPaymentForm(order)">
             Submit payment information
           </button>
